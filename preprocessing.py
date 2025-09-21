@@ -1,195 +1,3 @@
-# import numpy as np
-# import cv2
-# from PIL import Image
-# import pydicom
-# import nibabel as nib
-# from skimage import exposure
-# from sklearn import logger
-# import streamlit as st
-
-# def load_medical_image(file):
-#     """Load DICOM, NIfTI, or standard image formats with enhanced processing"""
-#     try:
-#         image = None
-#         metadata = {}
-        
-#         if file.name.endswith('.dcm'):
-#             # Load DICOM with metadata extraction
-#             dicom_data = pydicom.dcmread(file)
-#             image = dicom_data.pixel_array.astype(np.float32)
-            
-#             # Extract DICOM metadata
-#             try:
-#                 metadata['patient_id'] = getattr(dicom_data, 'PatientID', 'Unknown')
-#                 metadata['patient_name'] = getattr(dicom_data, 'PatientName', 'Unknown')
-#                 metadata['study_date'] = getattr(dicom_data, 'StudyDate', 'Unknown')
-#                 metadata['modality'] = getattr(dicom_data, 'Modality', 'Unknown')
-#                 metadata['study_description'] = getattr(dicom_data, 'StudyDescription', 'Unknown')
-#             except:
-#                 metadata = {}
-            
-#             # Apply windowing
-#             center = getattr(dicom_data, 'WindowCenter', 0)
-#             width = getattr(dicom_data, 'WindowWidth', 0)
-            
-#             if isinstance(center, pydicom.multival.MultiValue):
-#                 center = float(center[0])
-#             if isinstance(width, pydicom.multival.MultiValue):
-#                 width = float(width[0])
-            
-#             if center and width:
-#                 image = exposure.rescale_intensity(
-#                     image, 
-#                     in_range=(center - width/2, center + width/2),
-#                     out_range=(0, 1)
-#                 )
-#             else:
-#                 # Advanced normalization for medical images
-#                 image = exposure.equalize_adapthist(image, clip_limit=0.03) * 255
-                
-#         elif file.name.endswith(('.nii', '.nii.gz')):
-#             # Load NIfTI with enhanced processing
-#             nifti_img = nib.load(file)
-#             image_data = nifti_img.get_fdata()
-            
-#             # Take middle slice for 2D visualization
-#             if len(image_data.shape) == 3:
-#                 middle_slice = image_data.shape[2] // 2
-#                 image = image_data[:, :, middle_slice].astype(np.float32)
-#             else:
-#                 image = image_data.astype(np.float32)
-                
-#             # Advanced normalization
-#             image = exposure.equalize_adapthist(image, clip_limit=0.03) 
-            
-#         else:
-#             # Standard image formats with enhanced processing
-#             image = Image.open(file).convert('L')
-#             image = np.array(image).astype(np.float32)
-#             image_min = np.min(image)
-#             image_max = np.max(image)
-#             image= (image - image_min) / (image_max - image_min + 1e-8)
-#             # image = exposure.equalize_adapthist(image, clip_limit=0.03) * 255
-            
-#         return image, metadata
-        
-#     except Exception as e:
-#         logger.error(f"Error loading image: {str(e)}")
-#         st.error(f"Error loading image: {str(e)}")
-#         return None, {}
-
-# def preprocess_mri(image, target_size=(224, 224), is_3d=False, enhance=True):
-#     """Advanced MRI preprocessing with dual outputs:
-#        (1) model-ready normalized image
-#        (2) display-ready uint8 image
-#     """
-#     if isinstance(image, Image.Image):
-#         image = np.array(image)
-
-#     # Handle 3D volumes (slice by slice)
-#     if is_3d and len(image.shape) == 3:
-#         model_slices, display_slices = [], []
-#         for i in range(image.shape[2]):
-#             slice_img = image[:, :, i]
-#             m_ready, d_ready = preprocess_mri(slice_img, target_size, is_3d=False, enhance=enhance)
-#             model_slices.append(m_ready)
-#             display_slices.append(d_ready)
-#         return np.stack(model_slices, axis=2), np.stack(display_slices, axis=2)
-
-#     # Convert to grayscale if needed
-#     if len(image.shape) == 3 and image.shape[2] == 3:
-#         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-
-#     # Enhancement steps
-#     if enhance:
-#         if image.dtype != np.uint8:
-#             image_uint8 = (image * 255).astype(np.uint8) if image.max() <= 1 else image.astype(np.uint8)
-#         else:
-#             image_uint8 = image
-
-#         # CLAHE contrast enhancement
-#         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-#         image = clahe.apply(image_uint8)
-
-#         # Denoising
-#         image = cv2.fastNlMeansDenoising(image)
-
-#         # Edge enhancement
-#         kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-#         image = cv2.filter2D(image, -1, kernel)
-
-#     # Resize
-#     image = cv2.resize(image, target_size, interpolation=cv2.INTER_CUBIC)
-
-#     # --------- TWO OUTPUTS ---------
-#     # 1) Display-ready (uint8)
-#     display_ready = image.copy()
-#     if display_ready.dtype != np.uint8:
-#         display_ready = (255 * (display_ready - display_ready.min()) / (display_ready.ptp() + 1e-8)).astype(np.uint8)
-
-#     # 2) Model-ready (normalized float)
-#     model_ready = image.astype(np.float32) / 255.0
-#     if enhance:
-#         mean, std = np.mean(model_ready), np.std(model_ready)
-#         model_ready = (model_ready - mean) / (std if std > 0 else 1.0)
-#     else:
-#         model_ready = (model_ready - np.min(model_ready)) / (np.max(model_ready) - np.min(model_ready) + 1e-8)
-
-#     return model_ready, display_ready
-
-# def prepare_image_for_display(image):
-#     """Prepare image for display by ensuring it's in uint8 format [0,255]."""
-#     if image is None:
-#         return None
-    
-#     # Convert to float if needed
-#     if image.dtype==np.float32 or image.dtype==np.float64:
-#        if image.min() >=0 and image.max()<=1:
-#         # already normalized just convert to uint8   
-#            image_uint8 =(image *255).astype(np.uint8)
-#        elif image.min() >= -1 and image.max() <= 1:
-#            #image is in [-1 ,1] range , convert to [0,1] first
-#             image = (image +1) / 2.0
-#             image_uint8 =(image *255).ast(np.uint8)
-#        else:
-#             #Normailize to [0,,1] range
-#             min_val , max_val=np.min(image),np.max(image)
-#             if max_val > min_val:
-#                 image =(image - min_val) / (max_val - min_val)
-#             else:
-#                  image = np.zeros_like(image)
-#             image_uint8 =(image *255).astype(np.uint8)
-
-#     else:
-#           # If already uint8 but not in [0,255], normalize it
-#         image = image.astype(np.float32)
-#         min_val, max_val = np.min(image),np.max(image)
-#         if max_val > min_val:
-#             image = ( image - min_val) / (max_val - min_val)
-#         else:
-#             image = np.zeros_like(image)
-#         image_uint8 = (image * 255).astype(np.uint8)
-#     return image_uint8
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 import numpy as np
 import cv2
@@ -245,7 +53,6 @@ def load_medical_image(file):
             # Apply DICOM windowing if available
             center = getattr(dicom_data, 'WindowCenter', None)
             width = getattr(dicom_data, 'WindowWidth', None)
-            
             if center is not None and width is not None:
                 try:
                     if hasattr(center, '__iter__'):
@@ -498,3 +305,125 @@ def remove_small_components(mask, min_size=100):
     except Exception as e:
         logger.error(f"Error in remove_small_components: {e}")
         return mask
+
+def enhance_brain_image(image, clip_limit=0.03, kernel_size=5):
+    """
+    Enhanced brain image processing for better visualization
+    """
+    if image is None:
+        return None
+    
+    # Convert to float if needed
+    if image.dtype != np.float32:
+        image = image.astype(np.float32)
+    
+    # Normalize to 0-1 range
+    if image.max() > 1.0:
+        image = image / 255.0
+    
+    # Apply adaptive histogram equalization
+    enhanced = exposure.equalize_adapthist(image, clip_limit=clip_limit)
+    
+    # Apply mild Gaussian blur for noise reduction
+    enhanced = filters.gaussian(enhanced, sigma=0.5)
+    
+    return enhanced
+
+def extract_brain_region(image, threshold_method='otsu'):
+    """
+    Extract brain region from MRI using various thresholding methods
+    """
+    if image is None:
+        return None, None
+    
+    # Normalize image
+    normalized = (image - image.min()) / (image.max() - image.min() + 1e-8)
+    
+    # Apply thresholding
+    if threshold_method == 'otsu':
+        thresh = filters.threshold_otsu(normalized)
+        mask = normalized > thresh * 0.8
+    elif threshold_method == 'multiotsu':
+        thresholds = filters.threshold_multiotsu(normalized, classes=3)
+        mask = normalized > thresholds[1]
+    else:  # adaptive
+        mask = normalized > filters.threshold_local(normalized, block_size=51)
+    
+    # Clean up mask
+    mask = cv2.morphologyEx.binary_closing(mask, cv2.morphologyEx.disk(3))
+    mask = cv2.morphologyEx.binary_opening(mask, cv2.morphologyEx.disk(2))
+    mask = cv2.morphologyEx.remove_small_holes(mask, area_threshold=100)
+    mask = cv2.morphologyEx.remove_small_objects(mask, min_size=500)
+    
+    # Apply mask to original image
+    brain_only = image.copy()
+    brain_only[~mask] = 0
+    
+    return brain_only, mask
+
+def create_image_pyramid(image, levels=3):
+    """
+    Create image pyramid for multi-scale processing
+    """
+    pyramid = [image]
+    current = image.copy()
+    
+    for i in range(1, levels):
+        current = cv2.pyrDown(current)
+        pyramid.append(current)
+    
+    return pyramid
+
+def register_images(fixed_image, moving_image):
+    """
+    Simple image registration using feature matching
+    """
+    try:
+        # Convert to uint8 for OpenCV
+        fixed_8bit = (fixed_image * 255).astype(np.uint8)
+        moving_8bit = (moving_image * 255).astype(np.uint8)
+        
+        # Use ORB feature detector
+        orb = cv2.ORB_create()
+        kp1, des1 = orb.detectAndCompute(fixed_8bit, None)
+        kp2, des2 = orb.detectAndCompute(moving_8bit, None)
+        
+        # Match features
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(des1, des2)
+        matches = sorted(matches, key=lambda x: x.distance)
+        
+        # Extract matched keypoints
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+        
+        # Find homography
+        M, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
+        
+        # Apply transformation
+        registered = cv2.warpPerspective(moving_image, M, (fixed_image.shape[1], fixed_image.shape[0]))
+        
+        return registered, M
+        
+    except Exception as e:
+        logger.error(f"Image registration failed: {e}")
+        return moving_image, None
+
+# Example usage
+if __name__ == "__main__":
+    # Test the preprocessing functions
+    test_image = np.random.rand(256, 256).astype(np.float32)
+    
+    # Test preprocessing
+    model_img, display_img = preprocess_mri(test_image)
+    print(f"Model image shape: {model_img.shape}, Display image shape: {display_img.shape}")
+    
+    # Test enhancement
+    enhanced = enhance_brain_image(test_image)
+    print(f"Enhanced image shape: {enhanced.shape}")
+    
+    # Test brain extraction
+    brain, mask = extract_brain_region(test_image)
+    print(f"Brain extracted: {brain is not None}, Mask shape: {mask.shape if mask is not None else 'None'}")
+    
+    print("Preprocessing functions tested successfully")
