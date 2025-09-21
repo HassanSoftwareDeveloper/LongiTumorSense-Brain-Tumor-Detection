@@ -1,7 +1,8 @@
 
-
 # helper.py
 import torch
+import torch.nn as nn
+import torchvision.models as models
 import numpy as np
 from typing import Tuple, Callable, List, Dict, Optional, Union
 import streamlit as st
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Pre-trained model URLs and configuration
 PRETRAINED_MODELS = {
     'segmentation': {
-        'model_url': 'https://huggingface.co/matei-raluca/brain-tumor-segmentation/resolve/main/unet_brain_tumor.pth',
+        'model_url': 'https://huggingface.co/rzcoder/brain-tumor-classification/resolve/main/unet_brain_tumor.pth',
         'input_size': (128, 128, 128),
         'num_classes': 4
     },
@@ -48,20 +49,16 @@ PRETRAINED_MODELS = {
 def download_model(model_url, model_name):
     """Download pre-trained model weights"""
     try:
-        # Create models directory if it doesn't exist
         os.makedirs('models', exist_ok=True)
         model_path = os.path.join('models', model_name)
         
-        # Download from Hugging Face Hub or direct URL
         if 'huggingface.co' in model_url:
             repo_id = '/'.join(model_url.split('/')[3:5])
             filename = model_url.split('/')[-1]
             model_path = hf_hub_download(repo_id=repo_id, filename=filename, cache_dir='models')
         else:
-            # Direct download
             response = requests.get(model_url, stream=True)
             response.raise_for_status()
-            
             with open(model_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
@@ -87,10 +84,9 @@ def load_pretrained_model(model_type, device='cpu'):
                 num_res_units=2
             )
             
-            # Download and load weights
             model_path = download_model(PRETRAINED_MODELS['segmentation']['model_url'], 'unet_brain_tumor.pth')
             if model_path:
-                model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+                model.load_state_dict(torch.load(model_path, map_location=device))
                 logger.info("Loaded pre-trained segmentation model")
             
         elif model_type in ['efficientnet', 'resnet', 'densenet']:
@@ -110,10 +106,9 @@ def load_pretrained_model(model_type, device='cpu'):
                 model_url = PRETRAINED_MODELS['classification']['densenet_url']
                 model_name = 'densenet_brain_tumor.pth'
             
-            # Download and load weights
             model_path = download_model(model_url, model_name)
             if model_path:
-                model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+                model.load_state_dict(torch.load(model_path, map_location=device))
                 logger.info(f"Loaded pre-trained {model_type} classification model")
         
         model = model.to(device)
@@ -477,118 +472,145 @@ def display_dicom_metadata(metadata):
 def setup_page_config():
     """Set up Streamlit page configuration"""
     st.set_page_config(
-        page_title="NeuroVision AI - Advanced Brain Tumor Analysis",
+        page_title="LongiTumorSense Brain Tumor Detection ",
         page_icon="🧠",
         layout="wide",
         initial_sidebar_state="expanded"
     )
 
 def get_custom_css():
-    """Return custom CSS for the application"""
-    return """
-    <style>
-        .main-header {
-            background: linear-gradient(135deg, #1a6db3 0%, #103a61 100%);
-            padding: 2.5rem;
-            border-radius: 12px;
-            color: white;
-            text-align: center;
-            margin-bottom: 2.5rem;
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-        }
-        .metric-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
-            border-left: 4px solid #1a6db3;
-            margin: 1rem 0;
-            transition: transform 0.3s ease;
-        }
-        .metric-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.12);
-        }
-        .result-container {
-            background: #f8f9fa;
-            padding: 2rem;
-            border-radius: 12px;
-            margin: 1.5rem 0;
-            border: 1px solid #e9ecef;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        }
-        .warning-box {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            padding: 1.2rem;
-            border-radius: 8px;
-            margin: 1.2rem 0;
-            font-weight: 500;
-        }
-        .success-box {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            padding: 1.2rem;
-            border-radius: 8px;
-            margin: 1.2rem 0;
-            font-weight: 500;
-        }
-        .critical-box {
-            background: #f8d7da;
-            border: 1px solid #f5c6cb;
-            padding: 1.2rem;
-            border-radius: 8px;
-            margin: 1.2rem 0;
-            font-weight: 500;
-        }
-        .stProgress > div > div > div > div {
-            background: linear-gradient(90deg, #1a6db3 0%, #0d6efd 100%);
-        }
-        .sidebar .sidebar-content {
-            background: #f8f9fa;
-            border-right: 1px solid #e9ecef;
-        }
-        .patient-info {
-            background: #e9f7fe;
-            padding: 1.5rem;
-            border-radius: 10px;
-            border-left: 4px solid #1a6db3;
-            margin-bottom: 1.5rem;
-        }
-        .section-header {
-            border-bottom: 2px solid #1a6db3;
-            padding-bottom: 0.5rem;
-            margin-bottom: 1.5rem;
-            color: #1a6db3;
-            font-weight: 600;
-        }
-        .stButton button {
-            background: linear-gradient(135deg, #1a6db3 0%, #0d6efd 100%);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-        .stButton button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(13, 110, 253, 0.3);
-        }
-        .risk-high {
-            background: #f8d7da !important;
-            border-left: 4px solid #dc3545 !important;
-        }
-        .risk-medium {
-            background: #fff3cd !important;
-            border-left: 4px solid #ffc107 !important;
-        }
-        .risk-low {
-            background: #d4edda !important;
-            border-left: 4px solid #28a745 !important;
-        }
-    </style>
-    """
+  
+    #Enhanced CSS styling
+        st.markdown("""
+        <style>
+            .main-header {
+                text-align: center;
+                padding: 2.5rem 1rem;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border-radius: 20px;
+                margin-bottom: 2rem;
+                box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+                position: relative;
+                overflow: hidden;
+            }
+            .main-header::before {
+                content: '';
+                position: absolute;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+                animation: rotate 20s linear infinite;
+            }
+            @keyframes rotate {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .patient-info {
+                background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+                padding: 2rem;
+                border-radius: 15px;
+                border-left: 6px solid #007bff;
+                margin-bottom: 1.5rem;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+                position: relative;
+            }
+            .critical-box {
+                background: linear-gradient(135deg, #ffe6e6 0%, #ffcccc 100%);
+                border: 3px solid #dc3545;
+                border-radius: 15px;
+                padding: 2rem;
+                margin: 1rem 0;
+                box-shadow: 0 8px 30px rgba(220,53,69,0.25);
+                animation: pulse 2s infinite;
+            }
+            @keyframes pulse {
+                0% { box-shadow: 0 8px 30px rgba(220,53,69,0.25); }
+                50% { box-shadow: 0 12px 40px rgba(220,53,69,0.4); }
+                100% { box-shadow: 0 8px 30px rgba(220,53,69,0.25); }
+            }
+            .warning-box {
+                background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
+                border: 2px solid #ffc107;
+                border-radius: 15px;
+                padding: 1.5rem;
+                margin: 1rem 0;
+                box-shadow: 0 6px 20px rgba(255,193,7,0.2);
+            }
+            .success-box {
+                background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%);
+                border: 2px solid #28a745;
+                border-radius: 15px;
+                padding: 1.5rem;
+                margin: 1rem 0;
+                box-shadow: 0 6px 20px rgba(40,167,69,0.2);
+            }
+            .metric-card {
+                background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+                padding: 2rem;
+                border-radius: 15px;
+                text-align: center;
+                border: 2px solid #e9ecef;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+                transition: all 0.3s ease;
+                position: relative;
+                overflow: hidden;
+            }
+            .metric-card:hover {
+                transform: translateY(-8px) scale(1.02);
+                box-shadow: 0 15px 35px rgba(0,0,0,0.15);
+            }
+            .metric-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: -100%;
+                width: 100%;
+                height: 100%;
+                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+                transition: left 0.5s;
+            }
+            .metric-card:hover::before {
+                left: 100%;
+            }
+            .tumor-highlight {
+                background: linear-gradient(45deg, #ff6b6b 0%, #ee5a24 50%, #ff6b6b 100%);
+                color: white;
+                padding: 2rem;
+                border-radius: 20px;
+                margin: 1rem 0;
+                text-align: center;
+                font-weight: bold;
+                box-shadow: 0 10px 30px rgba(238,90,36,0.4);
+                animation: glow 3s infinite alternate;
+                position: relative;
+                overflow: hidden;
+            }
+            @keyframes glow {
+                from { box-shadow: 0 10px 30px rgba(238,90,36,0.4); }
+                to { box-shadow: 0 15px 40px rgba(238,90,36,0.6); }
+            }
+            .analysis-container {
+                background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+                padding: 2rem;
+                border-radius: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                margin-bottom: 2rem;
+            }
+            .feature-card {
+                background: white;
+                padding: 1.5rem;
+                border-radius: 15px;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                margin: 1rem 0;
+                border: 1px solid #e9ecef;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+   
 
 def visualize_segmentation_3d(volume: np.ndarray, mask: np.ndarray, alpha: float = 0.3, colormap: str = 'jet'):
     """Create 3D visualization of segmentation"""
@@ -651,63 +673,6 @@ def create_metrics_display(dice_scores: List[float], iou_scores: List[float], cl
         'quality': 'Excellent' if mean_metrics['mean_dice'] > 0.8 else 'Good' if mean_metrics['mean_dice'] > 0.6 else 'Fair' if mean_metrics['mean_dice'] > 0.4 else 'Poor'
     }
     return metrics
-
-def normalize_volume(volume: np.ndarray, method: str = 'zscore') -> np.ndarray:
-    """
-    Normalize volume using 'zscore' (percentile clipping + z-score), 'percentile' (0-1), or 'minmax'.
-    """
-    volume = volume.astype(np.float32)
-    if method == 'zscore':
-        # percentile clipping to remove outliers, then z-score
-        p1, p99 = np.percentile(volume, [1, 99])
-        clipped = np.clip(volume, p1, p99)
-        mean = np.mean(clipped)
-        std = np.std(clipped) + 1e-8
-        return (clipped - mean) / std
-    elif method == 'percentile':
-        # Percentile-based normalization (0-1)
-        p1, p99 = np.percentile(volume, [1, 99])
-        clipped = np.clip(volume, p1, p99)
-        return (clipped - p1) / (p99 - p1 + 1e-8)
-    else:
-        mn, mx = np.min(volume), np.max(volume)
-        return (volume - mn) / (mx - mn + 1e-8)
-
-def resize_volume(volume: np.ndarray, target_shape: Tuple[int, int, int]) -> np.ndarray:
-    """Resize 3D volume to target shape with linear interpolation (order=1)."""
-    try:
-        factors = [t / s for t, s in zip(target_shape, volume.shape)]
-        resized = ndimage.zoom(volume, zoom=factors, order=1, mode='nearest')
-        return resized
-    except Exception as e:
-        logger.exception(f"Error resizing volume: {e}")
-        raise
-
-def remove_small_components(mask: np.ndarray, min_size: int = 100) -> np.ndarray:
-    """Remove connected components smaller than min_size. Return cleaned mask."""
-    try:
-        from scipy.ndimage import label
-        labeled, num = label(mask)
-        if num <= 0:
-            return mask
-        counts = np.bincount(labeled.ravel())
-        small_ids = np.where(counts < min_size)[0]
-        cleaned = mask.copy()
-        for comp_id in small_ids:
-            if comp_id == 0:
-                continue
-            cleaned[labeled == comp_id] = 0
-        return cleaned
-    except Exception as e:
-        logger.exception(f"Error in remove_small_components (scipy): {e}")
-        # fallback to skimage
-        labeled = measure.label(mask)
-        regions = measure.regionprops(labeled)
-        cleaned = mask.copy()
-        for reg in regions:
-            if reg.area < min_size:
-                cleaned[labeled == reg.label] = 0
-        return cleaned
 
 def create_interactive_3d_visualization(volume: np.ndarray, mask: np.ndarray):
     """
@@ -874,6 +839,7 @@ def segment_with_pretrained_model(image):
     
     try:
         # Preprocess volume
+        from models import normalize_volume  # Import from models instead
         processed_volume = normalize_volume(image, method='zscore')
         
         # Add batch and channel dimensions
@@ -898,9 +864,6 @@ def segment_with_pretrained_model(image):
     except Exception as e:
         logger.error(f"Segmentation failed: {e}")
         return None
-
-
-
 
 
 
