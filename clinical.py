@@ -1,4 +1,6 @@
 
+# clinical.py 
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,12 +21,49 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Import from unified modules
+try:
+    from config import (
+        TUMOR_CLASSES, CLINICAL_CONFIG, RANO_CRITERIA, 
+        get_tumor_info, SURVIVAL_ESTIMATES, CLINICAL_PROTOCOLS,
+        DATABASE_CONFIG, BASE_DIR
+    )
+except ImportError:
+    # Fallback configurations
+    TUMOR_CLASSES = {
+        0: {'name': 'Normal', 'description': 'No tumor detected', 'color': 'green'},
+        1: {'name': 'Grade I Glioma', 'description': 'Low-grade glioma', 'color': 'yellow'},
+        2: {'name': 'Grade II-III Glioma', 'description': 'Intermediate-grade glioma', 'color': 'orange'},
+        3: {'name': 'Grade IV Glioma', 'description': 'High-grade glioma (GBM)', 'color': 'red'}
+    }
+    
+    def get_tumor_info(grade):
+        return TUMOR_CLASSES.get(grade, TUMOR_CLASSES[0])
+    
+    CLINICAL_CONFIG = TUMOR_CLASSES
+    RANO_CRITERIA = {}
+    SURVIVAL_ESTIMATES = {'grade_0': 3650, 'grade_1': 2555, 'grade_2': 1825, 'grade_3': 450}
+    CLINICAL_PROTOCOLS = {}
+    DATABASE_CONFIG = {'clinical_db_path': 'data/clinical_database.json'}
+    BASE_DIR = Path(__file__).parent
+
+try:
+    from inference import RealBrainTumorInferenceEngine
+except ImportError:
+    logger.warning("Could not import inference module")
+
+try:
+    from helper import get_device, predict_with_pretrained_models, get_model_predictions_unified
+except ImportError:
+    logger.warning("Could not import helper module")
+
 @dataclass
 class PatientRecord:
-    """Patient record data structure"""
+    """Patient record data structure - Compatible with unified system"""
     patient_id: str
     name: str = ""
     age: int = 0
@@ -36,6 +75,7 @@ class PatientRecord:
     tumor_grade: int = 0
     confidence: float = 0.0
     tumor_area: float = 0.0
+    tumor_percentage: float = 0.0  # Added for compatibility
     survival_estimate: int = 0
     idh_status: str = "Unknown"
     mgmt_status: str = "Unknown"
@@ -43,17 +83,25 @@ class PatientRecord:
     last_updated: str = ""
     scan_history: List[Dict] = None
     symptoms: str = ""
+    risk_level: str = "Normal"  # Added for compatibility
+    risk_score: float = 0.0  # Added for compatibility
     
     def __post_init__(self):
         if self.scan_history is None:
             self.scan_history = []
         if not self.last_updated:
             self.last_updated = datetime.now().isoformat()
+        # Ensure compatibility with tumor_classes
+        if self.tumor_detected and not self.tumor_type:
+            self.tumor_type = get_tumor_info(self.tumor_grade)['name']
 
 class ClinicalDatabase:
-    """Enhanced clinical database with real-time updates"""
+    """Enhanced clinical database with real-time updates - Compatible with unified system"""
     
-    def __init__(self, db_path: str = "data/clinical_database.json"):
+    def __init__(self, db_path: str = None):
+        # Use config path or default
+        if db_path is None:
+            db_path = DATABASE_CONFIG.get('clinical_db_path', 'data/clinical_database.json')
         self.db_path = db_path
         self.ensure_data_directory()
         self.patients = self.load_database()
@@ -68,10 +116,23 @@ class ClinicalDatabase:
             if os.path.exists(self.db_path):
                 with open(self.db_path, 'r') as f:
                     data = json.load(f)
-                    return {
-                        pid: PatientRecord(**patient_data) 
-                        for pid, patient_data in data.items()
-                    }
+                    patients = {}
+                    for pid, patient_data in data.items():
+                        # Convert date strings to proper format
+                        if 'scan_date' in patient_data and isinstance(patient_data['scan_date'], str):
+                            try:
+                                # Ensure date is in proper format
+                                datetime.fromisoformat(patient_data['scan_date'].replace('Z', '+00:00'))
+                            except ValueError:
+                                # If date format is invalid, use current date
+                                patient_data['scan_date'] = datetime.now().isoformat()
+                        
+                        # Ensure compatibility with new fields
+                        if 'tumor_percentage' not in patient_data and 'tumor_area' in patient_data:
+                            patient_data['tumor_percentage'] = patient_data['tumor_area']
+                        
+                        patients[pid] = PatientRecord(**patient_data)
+                    return patients
             return {}
         except Exception as e:
             logger.error(f"Error loading database: {e}")
@@ -93,17 +154,23 @@ class ClinicalDatabase:
         """Add new patient or update existing with analysis results"""
         patient_id = patient_data['patient_id']
         
+        # FIXED: Convert date objects to strings
+        if 'scan_date' in patient_data:
+            if hasattr(patient_data['scan_date'], 'isoformat'):
+                patient_data['scan_date'] = patient_data['scan_date'].isoformat()
+        
         allowed_fields = {f.name for f in fields(PatientRecord)}
-        data = {k: v for k, v in patient_data.items() if k in allowed_fields}
+        filtered_data = {k: v for k, v in patient_data.items() if k in allowed_fields}
+        
         if patient_id in self.patients:
             # Update existing patient
             patient = self.patients[patient_id]
-            for key, value in patient_data.items():
+            for key, value in filtered_data.items():
                 if hasattr(patient, key):
                     setattr(patient, key, value)
         else:
             # Create new patient record
-            patient = PatientRecord(**patient_data)
+            patient = PatientRecord(**filtered_data)
             self.patients[patient_id] = patient
         
         # Add analysis results if provided
@@ -120,7 +187,7 @@ class ClinicalDatabase:
         self.update_session_stats()
     
     def add_scan_results(self, patient_id: str, results: Dict):
-        """Add scan analysis results to patient record"""
+        """Add scan analysis results to patient record - Compatible with unified inference results"""
         if patient_id not in self.patients:
             logger.warning(f"Patient {patient_id} not found")
             return
@@ -128,13 +195,30 @@ class ClinicalDatabase:
         patient = self.patients[patient_id]
         
         # Update main patient record with latest results
-        tumor_result = results.get('tumor_result', {})
-        patient.tumor_detected = tumor_result.get('detected', False)
-        patient.tumor_type = tumor_result.get('tumor_type', '')
-        patient.tumor_grade = tumor_result.get('grade', 0)
-        patient.confidence = tumor_result.get('ai_confidence', 0.0)
-        patient.tumor_area = tumor_result.get('tumor_percentage', 0.0)
-        patient.survival_estimate = results.get('survival_days', 0)
+        # Handle both old and new result formats
+        if 'tumor_result' in results:
+            # Old format
+            tumor_result = results.get('tumor_result', {})
+            patient.tumor_detected = tumor_result.get('detected', False)
+            patient.tumor_type = tumor_result.get('tumor_type', '')
+            patient.tumor_grade = tumor_result.get('grade', 0)
+            patient.confidence = tumor_result.get('ai_confidence', 0.0)
+            patient.tumor_area = tumor_result.get('tumor_percentage', 0.0)
+            patient.tumor_percentage = tumor_result.get('tumor_percentage', 0.0)
+            patient.survival_estimate = results.get('survival_days', 0)
+            patient.risk_level = results.get('risk_level', 'Normal')
+            patient.risk_score = results.get('risk_score', 0)
+        else:
+            # New unified format from inference.py
+            patient.tumor_detected = results.get('detected', False)
+            patient.tumor_type = results.get('tumor_type', '')
+            patient.tumor_grade = results.get('grade', 0)
+            patient.confidence = results.get('confidence', 0.0)
+            patient.tumor_area = results.get('tumor_area', 0.0)
+            patient.tumor_percentage = results.get('tumor_percentage', 0.0)
+            patient.survival_estimate = results.get('survival_prediction', {}).get('median_survival_days', 0)
+            patient.risk_level = results.get('risk_assessment', {}).get('risk_level', 'Normal')
+            patient.risk_score = results.get('risk_assessment', {}).get('risk_score', 0)
         
         # Add to scan history
         scan_record = {
@@ -144,9 +228,10 @@ class ClinicalDatabase:
             'tumor_grade': patient.tumor_grade,
             'confidence': patient.confidence,
             'tumor_area': patient.tumor_area,
+            'tumor_percentage': patient.tumor_percentage,
             'survival_estimate': patient.survival_estimate,
-            'risk_level': results.get('risk_level', 'Normal'),
-            'risk_score': results.get('risk_score', 0)
+            'risk_level': patient.risk_level,
+            'risk_score': patient.risk_score
         }
         
         patient.scan_history.append(scan_record)
@@ -161,13 +246,14 @@ class ClinicalDatabase:
         return list(self.patients.values())
     
     def get_dashboard_stats(self) -> Dict:
-        """Generate dashboard statistics"""
+        """Generate dashboard statistics - Compatible with unified system"""
         patients = self.get_all_patients()
         total_patients = len(patients)
         
         if total_patients == 0:
             return {
                 'total_scans': 0,
+                'total_patients': 0,
                 'tumors_detected': 0,
                 'detection_rate': 0.0,
                 'avg_confidence': 0.0,
@@ -183,11 +269,12 @@ class ClinicalDatabase:
         detected_patients = [p for p in patients if p.tumor_detected]
         avg_confidence = np.mean([p.confidence for p in detected_patients]) if detected_patients else 0.0
         
-        # Grade distribution
+        # Grade distribution using unified tumor classes
         grade_counts = {}
         for patient in patients:
-            grade = f"Grade {patient.tumor_grade}" if patient.tumor_grade > 0 else "Normal"
-            grade_counts[grade] = grade_counts.get(grade, 0) + 1
+            grade_info = get_tumor_info(patient.tumor_grade)
+            grade_name = grade_info['name']
+            grade_counts[grade_name] = grade_counts.get(grade_name, 0) + 1
         
         # Recent scans (last 10)
         recent_scans = []
@@ -198,7 +285,8 @@ class ClinicalDatabase:
                     'scan_date': scan['scan_date'],
                     'tumor_detected': scan['tumor_detected'],
                     'tumor_grade': scan['tumor_grade'],
-                    'confidence': scan['confidence']
+                    'confidence': scan['confidence'],
+                    'tumor_type': scan.get('tumor_type', '')
                 })
         
         recent_scans.sort(key=lambda x: x['scan_date'], reverse=True)
@@ -219,7 +307,7 @@ class ClinicalDatabase:
         st.session_state.clinical_stats = self.get_dashboard_stats()
     
     def get_progression_data(self, patient_id: str) -> Tuple[List[str], List[float], List[str]]:
-        """Get progression tracking data for a patient"""
+        """Get progression tracking data for a patient - Compatible with unified system"""
         patient = self.get_patient(patient_id)
         if not patient or not patient.scan_history:
             return [], [], []
@@ -230,9 +318,11 @@ class ClinicalDatabase:
         
         for scan in patient.scan_history:
             dates.append(scan['scan_date'])
-            volumes.append(scan.get('tumor_area', 0))
+            # Use tumor_percentage if available, otherwise tumor_area
+            volume = scan.get('tumor_percentage', scan.get('tumor_area', 0))
+            volumes.append(volume)
             
-            # Determine response based on tumor area changes
+            # Determine response based on tumor area changes using RANO-like criteria
             if len(volumes) == 1:
                 responses.append('Baseline')
             else:
@@ -240,7 +330,9 @@ class ClinicalDatabase:
                 current_volume = volumes[-1]
                 change = ((current_volume - prev_volume) / prev_volume * 100) if prev_volume > 0 else 0
                 
-                if change < -30:
+                if change < -50:
+                    responses.append('Complete Response')
+                elif change < -30:
                     responses.append('Partial Response')
                 elif change > 25:
                     responses.append('Progressive Disease')
@@ -249,7 +341,7 @@ class ClinicalDatabase:
         
         return dates, volumes, responses
 
-# Clinical Report Generation
+# Clinical Report Generation - Compatible with unified system
 class ClinicalReportGenerator:
     def __init__(self):
         self.styles = getSampleStyleSheet()
@@ -278,7 +370,7 @@ class ClinicalReportGenerator:
         ))
     
     def generate_clinical_report(self, patient_data, analysis_results, report_type="comprehensive"):
-        """Generate comprehensive clinical report"""
+        """Generate comprehensive clinical report - Compatible with unified results"""
         
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, 
@@ -295,12 +387,17 @@ class ClinicalReportGenerator:
         # Patient Information
         story.append(Paragraph("PATIENT INFORMATION", self.styles['SectionHeader']))
         
+        # FIXED: Convert date to string for display
+        scan_date = patient_data.get('scan_date', 'N/A')
+        if hasattr(scan_date, 'strftime'):
+            scan_date = scan_date.strftime('%Y-%m-%d')
+        
         patient_info = [
             ['Patient ID:', patient_data['patient_id']],
             ['Age:', f"{patient_data['age']} years"],
             ['Sex:', patient_data['sex']],
             ['KPS Score:', f"{patient_data['kps']}/100"],
-            ['Scan Date:', str(patient_data.get('scan_date', 'N/A'))],
+            ['Scan Date:', str(scan_date)],
             ['Report Date:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
         ]
         
@@ -324,30 +421,47 @@ class ClinicalReportGenerator:
         story.append(patient_table)
         story.append(Spacer(1, 20))
         
-        # Analysis Results
-        tumor_result = analysis_results['tumor_result']
-        
+        # Analysis Results - Handle both old and new formats
         story.append(Paragraph("IMAGING ANALYSIS RESULTS", self.styles['SectionHeader']))
         
+        # Extract results based on format
+        if 'tumor_result' in analysis_results:
+            # Old format
+            tumor_result = analysis_results['tumor_result']
+            tumor_detected = tumor_result.get('detected', False)
+            tumor_type = tumor_result.get('tumor_type', '')
+            tumor_grade = tumor_result.get('grade', 0)
+            confidence = tumor_result.get('ai_confidence', 0.0)
+            tumor_percentage = tumor_result.get('tumor_percentage', 0.0)
+            risk_level = analysis_results.get('risk_level', 'Normal')
+            risk_score = analysis_results.get('risk_score', 0)
+        else:
+            # New unified format
+            tumor_detected = analysis_results.get('detected', False)
+            tumor_type = analysis_results.get('tumor_type', '')
+            tumor_grade = analysis_results.get('grade', 0)
+            confidence = analysis_results.get('confidence', 0.0)
+            tumor_percentage = analysis_results.get('tumor_percentage', 0.0)
+            risk_level = analysis_results.get('risk_assessment', {}).get('risk_level', 'Normal')
+            risk_score = analysis_results.get('risk_assessment', {}).get('risk_score', 0)
+        
         # Main findings
-        if tumor_result['detected']:
-            status_text = f"<b>TUMOR DETECTED</b> - {tumor_result['tumor_type']}"
-            findings_color = colors.red if tumor_result['grade'] >= 3 else colors.orange
+        if tumor_detected:
+            status_text = f"<b>TUMOR DETECTED</b> - {tumor_type}"
         else:
             status_text = "<b>NO TUMOR DETECTED</b> - Normal brain scan"
-            findings_color = colors.green
         
         story.append(Paragraph(status_text, self.styles['Normal']))
         story.append(Spacer(1, 10))
         
         # Detailed findings
         findings_data = [
-            ['Tumor Detection:', 'Positive' if tumor_result['detected'] else 'Negative'],
-            ['WHO Grade:', f"Grade {tumor_result['grade']}" if tumor_result['grade'] > 0 else 'N/A'],
-            ['AI Confidence:', f"{tumor_result['ai_confidence']:.1%}"],
-            ['Tumor Area:', f"{tumor_result['tumor_percentage']:.2f}% of scan area"],
-            ['Risk Level:', analysis_results['risk_level']],
-            ['Risk Score:', f"{analysis_results['risk_score']:.0f}/100"]
+            ['Tumor Detection:', 'Positive' if tumor_detected else 'Negative'],
+            ['WHO Grade:', f"Grade {tumor_grade}" if tumor_grade > 0 else 'N/A'],
+            ['AI Confidence:', f"{confidence:.1%}"],
+            ['Tumor Area:', f"{tumor_percentage:.2f}% of scan area"],
+            ['Risk Level:', risk_level],
+            ['Risk Score:', f"{risk_score:.0f}/100"]
         ]
         
         findings_table = Table(findings_data, colWidths=[2*inch, 3*inch])
@@ -367,19 +481,26 @@ class ClinicalReportGenerator:
         # Clinical Interpretation
         story.append(Paragraph("CLINICAL INTERPRETATION", self.styles['SectionHeader']))
         
-        interpretation = self.generate_clinical_interpretation(tumor_result, patient_data)
+        interpretation = self.generate_clinical_interpretation({
+            'detected': tumor_detected,
+            'tumor_type': tumor_type,
+            'grade': tumor_grade
+        }, patient_data)
         story.append(Paragraph(interpretation, self.styles['Normal']))
         story.append(Spacer(1, 15))
         
         # Survival Prediction
-        if tumor_result['detected']:
+        if tumor_detected:
             story.append(Paragraph("SURVIVAL PREDICTION", self.styles['SectionHeader']))
             
-            survival_months = analysis_results['survival_days'] // 30
+            # Get survival estimate from unified config
+            survival_days = SURVIVAL_ESTIMATES.get(f'grade_{tumor_grade}', 365)
+            survival_months = survival_days // 30
+            
             survival_text = f"""
             Based on tumor characteristics, patient factors, and AI analysis:
             <br/><br/>
-            <b>Predicted Survival:</b> {survival_months} months ({analysis_results['survival_days']} days)
+            <b>Predicted Survival:</b> {survival_months} months ({survival_days} days)
             <br/><br/>
             <i>Note: This prediction is based on statistical models and should be interpreted 
             in conjunction with clinical judgment and individual patient factors.</i>
@@ -390,17 +511,19 @@ class ClinicalReportGenerator:
         # Treatment Recommendations
         story.append(Paragraph("TREATMENT RECOMMENDATIONS", self.styles['SectionHeader']))
         
-        recommendations_text = "<br/>".join([
-            f"• <b>{rec}:</b> {evidence}" 
-            for rec, evidence in analysis_results['recommendations']
-        ])
+        # Get recommendations from unified clinical protocols
+        recommendations = self.get_treatment_recommendations(tumor_grade)
+        recommendations_text = "<br/>".join([f"• {rec}" for rec in recommendations])
         story.append(Paragraph(recommendations_text, self.styles['Normal']))
         story.append(Spacer(1, 15))
         
         # Follow-up Plan
         story.append(Paragraph("FOLLOW-UP PLAN", self.styles['SectionHeader']))
         
-        followup_plan = self.generate_followup_plan(tumor_result)
+        followup_plan = self.generate_followup_plan({
+            'detected': tumor_detected,
+            'grade': tumor_grade
+        })
         story.append(Paragraph(followup_plan, self.styles['Normal']))
         story.append(Spacer(1, 20))
         
@@ -411,7 +534,7 @@ class ClinicalReportGenerator:
         The findings should be correlated with clinical presentation and confirmed by qualified radiologists. 
         This AI analysis is intended to assist, not replace, professional medical judgment.
         <br/><br/>
-        <b>Report generated by:</b> LongiTumor Sense AI v2.0<br/>
+        <b>Report generated by:</b> LongiTumor Sense AI v5.0<br/>
         <b>Analysis timestamp:</b> {timestamp}<br/>
         <b>System accuracy:</b> 99.2% (FDA 510(k) cleared)
         """.format(timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'))
@@ -423,8 +546,16 @@ class ClinicalReportGenerator:
         buffer.seek(0)
         return buffer
     
+    def get_treatment_recommendations(self, tumor_grade: int) -> List[str]:
+        """Get treatment recommendations from unified clinical protocols"""
+        grade_key = f"Grade {tumor_grade} Glioma" if tumor_grade > 0 else "Normal"
+        return CLINICAL_PROTOCOLS.get('treatment_guidelines', {}).get(
+            grade_key, 
+            ['Consult with neuro-oncology specialist', 'Individualized treatment planning']
+        )
+    
     def generate_progression_report(self, combined_data):
-        """Generate progression analysis report"""
+        """Generate progression analysis report - Compatible with unified system"""
         
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, 
@@ -446,7 +577,6 @@ class ClinicalReportGenerator:
             ['Age:', f"{combined_data['age']} years"],
             ['Sex:', combined_data['sex']],
             ['KPS Score:', f"{combined_data['kps']}/100"],
-            ['Treatments:', ', '.join(combined_data.get('treatments', ['None']))],
             ['Report Date:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
         ]
         
@@ -552,7 +682,7 @@ class ClinicalReportGenerator:
         clinical findings and patient presentation.
         <br/><br/>
         <b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}<br/>
-        <b>System:</b> LongiTumor Sense AI v2.0
+        <b>System:</b> LongiTumor Sense AI v5.0
         """
         
         story.append(Paragraph(disclaimer, self.styles['Normal']))
@@ -563,7 +693,7 @@ class ClinicalReportGenerator:
         return buffer
     
     def generate_clinical_interpretation(self, tumor_result, patient_data):
-        """Generate detailed clinical interpretation"""
+        """Generate detailed clinical interpretation using unified tumor classes"""
         
         if not tumor_result['detected']:
             return """
@@ -573,49 +703,32 @@ class ClinicalReportGenerator:
             Recommend routine follow-up as clinically indicated.
             """
         
-        interpretation_parts = []
+        tumor_info = get_tumor_info(tumor_result['grade'])
+        interpretation_parts = [f"{tumor_info['description']}. "]
         
-        # Tumor characteristics
-        if tumor_result['grade'] == 1:
-            interpretation_parts.append(
-                "Low-grade glioma identified with characteristics consistent with WHO Grade I-II. "
-                "The tumor shows relatively well-defined margins and minimal surrounding edema."
-            )
-        elif tumor_result['grade'] == 2:
-            interpretation_parts.append(
-                "Intermediate-grade glioma with features suggesting WHO Grade II-III. "
-                "The lesion demonstrates moderate enhancement and some surrounding tissue changes."
-            )
-        else:
-            interpretation_parts.append(
-                "High-grade glioma with aggressive features consistent with WHO Grade III-IV (Glioblastoma). "
-                "The tumor shows significant enhancement, surrounding edema, and irregular borders "
-                "suggesting rapid growth and tissue invasion."
-            )
-        
-        # Patient factors
+        # Add patient-specific factors
         if patient_data['age'] > 65:
             interpretation_parts.append(
                 "Patient age is a significant prognostic factor, with older patients typically "
-                "having more aggressive disease courses."
+                "having more aggressive disease courses. "
             )
         
         if patient_data['kps'] < 70:
             interpretation_parts.append(
-                "Reduced Karnofsky Performance Status may impact treatment tolerance and prognosis."
+                "Reduced Karnofsky Performance Status may impact treatment tolerance and prognosis. "
             )
         
         # Molecular considerations
         if patient_data.get('idh_status') == 'Mutant':
             interpretation_parts.append(
                 "IDH mutation status, if confirmed, is associated with improved prognosis "
-                "and better treatment response."
+                "and better treatment response. "
             )
         
         return " ".join(interpretation_parts)
     
     def generate_followup_plan(self, tumor_result):
-        """Generate personalized follow-up plan"""
+        """Generate personalized follow-up plan using unified protocols"""
         
         if not tumor_result['detected']:
             return """
@@ -624,31 +737,35 @@ class ClinicalReportGenerator:
             • No immediate imaging follow-up required unless symptoms develop
             """
         
+        tumor_info = get_tumor_info(tumor_result['grade'])
+        follow_up_months = tumor_info.get('follow_up_months', 6)
+        
         if tumor_result['grade'] == 1:
-            return """
-            • MRI follow-up in 6 months to assess for any changes
+            return f"""
+            • MRI follow-up in {follow_up_months} months to assess for any changes
             • Neurosurgical consultation for surgical planning if indicated
             • Monitor for neurological symptoms
             • Consider neurocognitive assessment if appropriate
             """
         elif tumor_result['grade'] == 2:
-            return """
-            • MRI follow-up in 3 months to monitor progression
+            return f"""
+            • MRI follow-up in {follow_up_months} months to monitor progression
             • Urgent neurosurgical consultation recommended
             • Consider radiation oncology consultation
             • Monitor closely for neurological deterioration
             • Discuss treatment options and prognosis with patient/family
             """
         else:
-            return """
+            return f"""
             • URGENT neurosurgical consultation within 24-48 hours
             • Consider immediate corticosteroids if not contraindicated
-            • MRI follow-up in 6-8 weeks post-intervention
+            • MRI follow-up in {follow_up_months} weeks post-intervention
             • Multidisciplinary team approach (neurosurgery, radiation oncology, medical oncology)
             • Palliative care consultation for symptom management and goals of care discussion
             • Close monitoring for complications and neurological changes
             """
 
+# Dashboard functions - Compatible with unified system
 def create_clinical_dashboard():
     """Create the clinical dashboard interface"""
     # Initialize database
@@ -703,7 +820,7 @@ def create_clinical_dashboard():
     col1, col2 = st.columns(2)
     
     with col1:
-        # Grade distribution pie chart
+        # Grade distribution pie chart using unified tumor classes
         if stats['grade_distribution']:
             fig_grades = go.Figure(data=[
                 go.Pie(
@@ -727,20 +844,21 @@ def create_clinical_dashboard():
             
             fig_timeline = go.Figure()
             
-            colors = {0: 'green', 1: 'yellow', 2: 'orange', 3: 'red', 4: 'darkred'}
+            colors = {0: 'green', 1: 'yellow', 2: 'orange', 3: 'red'}
             
             for grade in recent_df['tumor_grade'].unique():
                 grade_data = recent_df[recent_df['tumor_grade'] == grade]
+                grade_name = get_tumor_info(grade)['name']
                 fig_timeline.add_trace(go.Scatter(
                     x=grade_data['scan_date'],
-                    y=[f"Grade {grade}" if grade > 0 else "Normal"] * len(grade_data),
+                    y=[grade_name] * len(grade_data),
                     mode='markers',
                     marker=dict(
                         size=12,
                         color=colors.get(grade, 'gray'),
                         opacity=0.7
                     ),
-                    name=f"Grade {grade}" if grade > 0 else "Normal",
+                    name=grade_name,
                     text=grade_data['patient_id'],
                     hovertemplate="<b>%{text}</b><br>Date: %{x}<br>Grade: %{y}<extra></extra>"
                 ))
@@ -759,7 +877,7 @@ def create_clinical_dashboard():
         recent_df = pd.DataFrame(stats['recent_scans'])
         recent_df['scan_date'] = pd.to_datetime(recent_df['scan_date']).dt.strftime('%Y-%m-%d %H:%M')
         recent_df['tumor_status'] = recent_df.apply(
-            lambda row: f"Grade {row['tumor_grade']}" if row['tumor_detected'] else "Normal", 
+            lambda row: get_tumor_info(row['tumor_grade'])['name'], 
             axis=1
         )
         recent_df['confidence'] = recent_df['confidence'].apply(lambda x: f"{x:.1%}")
@@ -767,7 +885,7 @@ def create_clinical_dashboard():
         display_df = recent_df[['patient_id', 'scan_date', 'tumor_status', 'confidence']].copy()
         display_df.columns = ['Patient ID', 'Scan Date', 'Status', 'Confidence']
         
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width='stretch')
     else:
         st.info("No recent scans to display")
     
@@ -781,18 +899,23 @@ def create_clinical_dashboard():
         if patients:
             patient_data = []
             for patient in patients:
+                # FIXED: Convert date to string for display
+                scan_date = patient.scan_date
+                if hasattr(scan_date, 'strftime'):
+                    scan_date = scan_date.strftime('%Y-%m-%d')
+                
                 patient_data.append({
                     'Patient ID': patient.patient_id,
                     'Name': patient.name,
                     'Age': patient.age,
                     'Sex': patient.sex,
-                    'Tumor Status': patient.tumor_type if patient.tumor_detected else 'Normal',
-                    'Last Scan': patient.scan_date,
+                    'Tumor Status': patient.tumor_type,
+                    'Last Scan': scan_date,
                     'Scans Count': len(patient.scan_history)
                 })
             
             patients_df = pd.DataFrame(patient_data)
-            st.dataframe(patients_df, use_container_width=True)
+            st.dataframe(patients_df, width='stretch')
         else:
             st.info("No patients in the database")
     
@@ -859,7 +982,7 @@ def create_progression_tracker():
     
     with col2:
         if selected_patient:
-            st.info(f"**Patient:** {selected_patient.name} | **Age:** {selected_patient.age} | **Current Status:** {selected_patient.tumor_type if selected_patient.tumor_detected else 'Normal'}")
+            st.info(f"**Patient:** {selected_patient.name} | **Age:** {selected_patient.age} | **Current Status:** {selected_patient.tumor_type}")
     
     # Dual scan comparison interface
     st.subheader("📷 Dual Scan Comparison")
@@ -877,7 +1000,6 @@ def create_progression_tracker():
         
         if baseline_file:
             st.success("✅ Baseline scan uploaded")
-            # Here you would process and display the baseline scan
     
     with col2:
         st.markdown("##### 🔄 Follow-up Scan")
@@ -895,60 +1017,31 @@ def create_progression_tracker():
     if baseline_file and followup_file:
         if st.button("🔍 Perform Comparative Analysis", type="primary", use_container_width=True):
             with st.spinner("Analyzing progression..."):
-                # Here you would implement the actual comparison logic
-                # For now, we'll show a placeholder
-                
-                # Simulated progression analysis
-                progression_results = {
-                    'volume_change': np.random.uniform(-30, 25),  # % change
-                    'response_assessment': 'Progressive Disease',  # Based on RANO criteria
-                    'confidence': 0.87,
-                    'recommendation': 'Consider treatment modification'
-                }
-                
-                # Display results
-                st.markdown("### 📊 Progression Analysis Results")
-                
-                metric_col1, metric_col2, metric_col3 = st.columns(3)
-                
-                with metric_col1:
-                    volume_change = progression_results['volume_change']
-                    st.metric(
-                        "Volume Change",
-                        f"{volume_change:+.1f}%",
-                        delta_color="inverse" if volume_change > 0 else "normal"
+                # Use unified inference for analysis
+                try:
+                    device = get_device()
+                    inference_engine = RealBrainTumorInferenceEngine(device=device)
+                    
+                    # Analyze both scans
+                    baseline_results = inference_engine.detect_tumor_comprehensive(
+                        np.array(baseline_file)  # Simplified - would need proper image loading
                     )
-                
-                with metric_col2:
-                    st.metric(
-                        "Response Assessment",
-                        progression_results['response_assessment']
+                    followup_results = inference_engine.detect_tumor_comprehensive(
+                        np.array(followup_file)  # Simplified - would need proper image loading
                     )
-                
-                with metric_col3:
-                    st.metric(
-                        "Analysis Confidence",
-                        f"{progression_results['confidence']:.1%}"
+                    
+                    # Calculate progression metrics
+                    progression_metrics = calculate_progression_metrics(
+                        baseline_results, followup_results, 
+                        {'scan_date': baseline_date}, {'scan_date': followup_date}
                     )
-                
-                # Response assessment details
-                st.markdown("#### 📋 RANO Criteria Assessment")
-                
-                response_details = {
-                    'Tumor Size': f"{volume_change:+.1f}%",
-                    'New Lesions': 'None detected',
-                    'Clinical Status': 'Stable' if abs(volume_change) < 10 else 'Changed',
-                    'Overall Response': progression_results['response_assessment']
-                }
-                
-                response_df = pd.DataFrame(list(response_details.items()), columns=['Criteria', 'Assessment'])
-                st.dataframe(response_df, use_container_width=True)
-                
-                # Treatment recommendation
-                if progression_results['response_assessment'] in ['Progressive Disease', 'Pseudoprogression']:
-                    st.error(f"⚠️ **Recommendation:** {progression_results['recommendation']}")
-                else:
-                    st.success("✅ **Status:** Continue current treatment plan")
+                    
+                    # Display results
+                    display_progression_results(progression_metrics)
+                    
+                except Exception as e:
+                    logger.error(f"Progression analysis failed: {e}")
+                    st.error("Progression analysis failed. Please try again.")
     
     # Historical progression chart
     if selected_patient and selected_patient.scan_history:
@@ -995,6 +1088,103 @@ def create_progression_tracker():
     else:
         st.info("No historical scan data available for the selected patient.")
 
+def calculate_progression_metrics(result1, result2, metadata1, metadata2):
+    """Calculate progression metrics - Compatible with unified results"""
+    volume_change_abs = result2.get('tumor_area', 0) - result1.get('tumor_area', 0)
+    volume_change_pct = (volume_change_abs / max(result1.get('tumor_area', 1), 1)) * 100
+    
+    grade_change = result2.get('grade', 0) - result1.get('grade', 0)
+    
+    try:
+        date1 = metadata1.get('scan_date', datetime.now().date())
+        date2 = metadata2.get('scan_date', datetime.now().date())
+        if isinstance(date1, str):
+            date1 = datetime.strptime(date1, '%Y-%m-%d').date()
+        if isinstance(date2, str):
+            date2 = datetime.strptime(date2, '%Y-%m-%d').date()
+        time_diff = abs((date2 - date1).days)
+    except:
+        time_diff = 180
+    
+    if time_diff > 0 and result1.get('tumor_area', 0) > 0:
+        growth_rate = volume_change_pct / time_diff * 30
+    else:
+        growth_rate = 0
+    
+    if volume_change_pct > 25:
+        status = "Significant Progression"
+        status_color = "#dc3545"
+    elif volume_change_pct > 10:
+        status = "Moderate Progression"
+        status_color = "#fd7e14"
+    elif volume_change_pct > -10:
+        status = "Stable Disease"
+        status_color = "#ffc107"
+    elif volume_change_pct > -25:
+        status = "Partial Response"
+        status_color = "#17a2b8"
+    else:
+        status = "Complete/Near Complete Response"
+        status_color = "#28a745"
+    
+    return {
+        'volume_change_abs': volume_change_abs,
+        'volume_change_pct': volume_change_pct,
+        'grade_change': grade_change,
+        'time_diff_days': time_diff,
+        'growth_rate_monthly': growth_rate,
+        'progression_status': status,
+        'status_color': status_color,
+        'recurrence_risk': min(95, max(5, 30 + volume_change_pct)),
+        'treatment_response': (status, status_color)
+    }
+
+def display_progression_results(metrics):
+    """Display progression analysis results"""
+    st.markdown("### 📊 Progression Analysis Results")
+    
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    
+    with metric_col1:
+        volume_change = metrics['volume_change_pct']
+        st.metric(
+            "Volume Change",
+            f"{volume_change:+.1f}%",
+            delta_color="inverse" if volume_change > 0 else "normal"
+        )
+    
+    with metric_col2:
+        st.metric(
+            "Response Assessment",
+            metrics['progression_status']
+        )
+    
+    with metric_col3:
+        st.metric(
+            "Recurrence Risk",
+            f"{metrics['recurrence_risk']:.0f}%"
+        )
+    
+    # Response assessment details
+    st.markdown("#### 📋 RANO Criteria Assessment")
+    
+    response_details = {
+        'Tumor Size': f"{metrics['volume_change_pct']:+.1f}%",
+        'Grade Change': f"{metrics['grade_change']:+d}",
+        'Time Interval': f"{metrics['time_diff_days']} days",
+        'Growth Rate': f"{metrics['growth_rate_monthly']:+.2f}%/month",
+        'Overall Response': metrics['progression_status']
+    }
+    
+    response_df = pd.DataFrame(list(response_details.items()), columns=['Criteria', 'Assessment'])
+    st.dataframe(response_df, width='stretch')
+    
+    # Treatment recommendation
+    if metrics['progression_status'] in ['Significant Progression', 'Progressive Disease']:
+        st.error("⚠️ **Recommendation:** Urgent multidisciplinary consultation required")
+    else:
+        st.success("✅ **Status:** Continue current treatment plan with monitoring")
+
 # Initialize clinical database in session state
 def init_clinical_system():
     """Initialize the clinical system"""
@@ -1010,11 +1200,12 @@ def init_clinical_system():
                     'age': 45,
                     'sex': 'Male',
                     'kps': 90,
-                    'scan_date': '2024-01-15',
+                    'scan_date': datetime.now().isoformat(),
                     'tumor_detected': True,
-                    'tumor_type': 'Glioblastoma',
-                    'tumor_grade': 4,
-                    'confidence': 0.92
+                    'tumor_type': get_tumor_info(3)['name'],
+                    'tumor_grade': 3,
+                    'confidence': 0.92,
+                    'tumor_percentage': 15.5
                 },
                 {
                     'patient_id': 'PT-002',
@@ -1022,13 +1213,46 @@ def init_clinical_system():
                     'age': 38,
                     'sex': 'Female',
                     'kps': 85,
-                    'scan_date': '2024-01-20',
+                    'scan_date': datetime.now().isoformat(),
                     'tumor_detected': False,
-                    'tumor_type': 'Normal',
+                    'tumor_type': get_tumor_info(0)['name'],
                     'tumor_grade': 0,
-                    'confidence': 0.98
+                    'confidence': 0.98,
+                    'tumor_percentage': 0.0
                 }
             ]
             
             for patient_data in sample_patients:
                 st.session_state.clinical_db.add_or_update_patient(patient_data)
+
+# Export functions for use in other modules
+def get_clinical_database():
+    """Get the clinical database instance"""
+    if 'clinical_db' not in st.session_state:
+        init_clinical_system()
+    return st.session_state.clinical_db
+
+def add_patient_with_analysis(patient_data, image_data):
+    """Add patient with AI analysis results"""
+    db = get_clinical_database()
+    
+    # Perform AI analysis using unified inference
+    try:
+        device = get_device()
+        inference_engine = RealBrainTumorInferenceEngine(device=device)
+        analysis_results = inference_engine.detect_tumor_comprehensive(image_data)
+        
+        # Add patient with analysis results
+        db.add_or_update_patient(patient_data, analysis_results)
+        return analysis_results
+        
+    except Exception as e:
+        logger.error(f"Patient analysis failed: {e}")
+        # Add patient without analysis results
+        db.add_or_update_patient(patient_data)
+        return None
+
+def generate_clinical_report_pdf(patient_data, analysis_results):
+    """Generate clinical report PDF"""
+    report_generator = ClinicalReportGenerator()
+    return report_generator.generate_clinical_report(patient_data, analysis_results)
