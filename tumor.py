@@ -1,4 +1,5 @@
 
+
 # Frontend.py file
 import streamlit as st
 import numpy as np
@@ -17,9 +18,7 @@ import json
 import warnings
 import os
 import random
-
-
-
+import torch
 
 # Import from helper.py - CORRECTED (removed duplicate functions)
 from helper import (
@@ -42,27 +41,28 @@ from helper import (
     create_interactive_3d_visualization,
     load_users_from_config,
     predict_with_pretrained_models,
-    prepare_image_for_model,
+    prepare_image_for_model_unified,
     segment_with_pretrained_model,
     download_model,
     load_pretrained_model
 )
 
-
-
 # Import from models.py 
 from models import (
-    BrainTumorDetector, 
-    BrainTumorSegmenter, 
+    WorldClassEnsemble,        # NEW: Main ensemble model (replaces BrainTumorDetector)
+    BraTSStyleUNet,
+    BraTSClassifier,
     Enhanced3DUNet,
     EnhancedGliomaClassifier,
+    BrainTumorSegmenter, 
+    # UPDATED LOADING FUNCTIONS:
     load_pretrained_detector, 
     load_pretrained_segmenter,
-    load_brats_model,
+    load_brats_model,          # KEPT: For backward compatibility
     get_ensemble_models,
     preprocess_for_model,
     preprocessor,
-    # Add the functions that were moved from helper.py
+    # Image processing functions
     normalize_volume,
     resize_volume,
     remove_small_components,
@@ -71,7 +71,6 @@ from models import (
     create_image_pyramid,
     register_images
 )
-
 # Import from preprocessing.py 
 try:
     from preprocessing import (
@@ -101,8 +100,6 @@ except ImportError:
     def prepare_image_for_display(image):
         """Fallback display preparation function"""
         return (image - image.min()) / (image.max() - image.min() + 1e-8)
-    
-
 
 # Import from inference.py 
 from inference import (
@@ -135,10 +132,9 @@ from config import (
     get_auth_config,
     get_sample_users,
     SAMPLE_USERS,
-    AUTH_CONFIG
+    AUTH_CONFIG,
+    _hash_password  # Import the password hashing function from config
 )
-
-
 
 from skimage import measure
 import logging
@@ -197,9 +193,6 @@ def predict_survival(tumor_info, patient_data, survival_model=None, survival_sca
     except Exception as e:
         return 365
 
-
-
-
 def generate_treatment_recommendations(tumor_info, survival_days, patient_data):
     """Generate treatment recommendations based on tumor analysis"""
     recommendations = []
@@ -225,8 +218,6 @@ def generate_treatment_recommendations(tumor_info, survival_days, patient_data):
         recommendations.append(("Palliative care consultation", "Symptom management"))
  
     return recommendations
-
-
 
 def calculate_risk_level(tumor_info, patient_data):
     """Calculate overall risk level for patient"""
@@ -265,9 +256,6 @@ def get_risk_level(grade, tumor_percentage):
     else:
         return "High Risk - Urgent"
 
-
-
-
 def create_error_result(image_slice, error_msg):
     """Create error result structure"""
     return {
@@ -287,8 +275,24 @@ def create_error_result(image_slice, error_msg):
         'regions_map': np.zeros_like(image_slice)
     }
 
-
-
+def safe_dataframe_display(df, width='stretch'):
+    """Safely display DataFrame in Streamlit by converting dates to strings"""
+    df_fixed = df.copy()
+    
+    # Convert date columns to string
+    for col in df_fixed.columns:
+        if df_fixed[col].dtype == 'object':
+            # Check if it contains date objects
+            try:
+                # Try to convert to datetime first
+                df_fixed[col] = pd.to_datetime(df_fixed[col], errors='ignore')
+                # If still object, convert to string
+                if df_fixed[col].dtype == 'object':
+                    df_fixed[col] = df_fixed[col].astype('string')
+            except:
+                df_fixed[col] = df_fixed[col].astype('string')
+    
+    return st.dataframe(df_fixed, width=width)
 
 # Page configuration
 st.set_page_config(
@@ -410,10 +414,6 @@ def create_world_class_visualization(original_image, tumor_result):
     plt.tight_layout()
     return fig
 
-
-
-
-
 def create_progression_comparison_visualization(image1, image2, result1, result2, progression_metrics):
     """Create comprehensive progression comparison visualization"""
     
@@ -459,9 +459,38 @@ def create_progression_comparison_visualization(image1, image2, result1, result2
     plt.tight_layout()
     return fig
 
-
-
-
+# ==================== UPDATED AUTHENTICATION FUNCTION ====================
+def verify_user_credentials(username, password, license_number, institution):
+    """
+    Verify user credentials against SAMPLE_USERS from config.py
+    Uses the same authentication system as config.py
+    """
+    try:
+        # Get sample users from config
+        sample_users = get_sample_users()
+        
+        # Check if username exists
+        if username not in sample_users:
+            return False
+        
+        user_data = sample_users[username]
+        
+        # Verify password using the same hashing as config.py
+        password_hash = _hash_password(password)
+        
+        # Check password and license
+        if (user_data['password_hash'] == password_hash and 
+            user_data['license'] == license_number and
+            user_data['institution'] == institution and
+            user_data['is_active']):
+            
+            return True
+        
+        return False
+        
+    except Exception as e:
+        st.error(f"Authentication error: {e}")
+        return False
 
 # Main application
 def main():
@@ -516,15 +545,17 @@ def main():
      
         with st.expander(" Quick Demo Access"):
             st.info("For demonstration purposes:")
-            st.code("Username: demo | Password: demo123! | License: MD999999 | Institution: Demo Hospital")
+            st.code("Username: demo | Password: demo123 | License: MD999999 | Institution: Demo Hospital")
             st.code("Username: hassan | Password: hassan123! | License: MD123456 | Institution: Mayo Clinic")
+            st.code("Username: radiology.ai | Password: RadAI456! | License: MD654321 | Institution: Mass General Hospital")
+            st.code("Username: brain.surgeon | Password: Surgery789! | License: MD987654 | Institution: Johns Hopkins Hospital")
      
         if st.button("🔓 Authenticate", type="primary"):
             if not all([username, password, license_number, institution, agree_terms]):
                 st.error("Please fill in all required fields and agree to the terms")
                 st.session_state.login_attempts += 1
                 st.session_state.last_login_attempt = datetime.now()
-            elif verify_credentials(username, password, license_number, institution):
+            elif verify_user_credentials(username, password, license_number, institution):
                 st.session_state.authenticated = True
                 st.session_state.user_info = {
                     'username': username,
@@ -597,7 +628,7 @@ def main():
                         display_image = image
                  
                     display_image_norm = (display_image - display_image.min()) / (display_image.max() - display_image.min())
-                    st.image(display_image_norm, caption="MRI Preview", use_column_width=True)
+                    st.image(display_image_norm, caption="MRI Preview", width='stretch')
                  
                     st.markdown("#### 📝 Patient Information")
                     patient_id = st.text_input("Patient ID", value=f"PT-{random.randint(1000, 9999)}")
@@ -774,7 +805,7 @@ def main():
                         baseline_display = baseline_image
                     
                     baseline_norm = (baseline_display - baseline_display.min()) / (baseline_display.max() - baseline_display.min())
-                    st.image(baseline_norm, caption="Baseline Scan Preview")
+                    st.image(baseline_norm, caption="Baseline Scan Preview", width='stretch')
                     st.success(f"✅ Baseline loaded: {baseline_image.shape}")
         
         with col2:
@@ -797,7 +828,7 @@ def main():
                         followup_display = followup_image
                     
                     followup_norm = (followup_display - followup_display.min()) / (followup_display.max() - followup_display.min())
-                    st.image(followup_norm, caption="Follow-up Scan Preview")
+                    st.image(followup_norm, caption="Follow-up Scan Preview", width='stretch')
                     st.success(f"✅ Follow-up loaded: {followup_image.shape}")
         
         # Patient information for progression analysis
@@ -1091,9 +1122,6 @@ def main():
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-
- 
 
 if __name__ == "__main__":
     # Create necessary directories
