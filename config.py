@@ -1,7 +1,8 @@
+# config.py
 
 """
 NeuroVision AI Configuration File
-Contains all configuration settings, model parameters, and system constants
+Fully compatible with models.py, inference.py, preprocessing.py, and helper.py
 """
 import os
 import json
@@ -9,19 +10,46 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 import torch
-import hashlib  # Changed from bcrypt to hashlib for compatibility
+import hashlib
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# logging_fix.py - Fixed for Windows compatibility
+import sys
+
+def setup_windows_logging():
+    """Fix Unicode logging issues on Windows"""
+    if sys.platform == "win32":
+        # Force UTF-8 encoding in Windows console
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8')
+    
+    # Configure logging to handle Unicode
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler('app.log', encoding='utf-8')
+        ]
+    )
+
+def get_safe_logger(name):
+    """Get a logger that safely handles Unicode characters"""
+    logger = logging.getLogger(name)
+    return logger
+
 # ========================= SYSTEM CONFIGURATION =========================
 # Application Settings
-APP_NAME = "NeuroVision AI Pro"
+APP_NAME = "LongiTumorSense Brain Tumor Detection"
 APP_VERSION = "5.0"
 DEBUG_MODE = os.getenv('DEBUG', 'False').lower() == 'true'
 
-# Directory Structure
+# Directory Structure - Compatible with all modules
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / "models"
@@ -45,7 +73,7 @@ DATABASE_CONFIG = {
 # ========================= UI CONFIGURATION =========================
 UI_CONFIG = {
     'page_config': {
-        'page_title': 'NeuroVision AI Pro',
+        'page_title': 'LongiTumorSense Brain Tumor Detection',
         'page_icon': '🧠',
         'layout': 'wide',
         'initial_sidebar_state': 'expanded'
@@ -89,81 +117,11 @@ UI_CONFIG = {
 }
 
 # ========================= SAMPLE USERS CONFIGURATION =========================
-# Helper function to hash passwords
+# Helper function to hash passwords - Compatible with helper.py
 def _hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 SAMPLE_USERS = {
-    'admin': {
-        'username': 'admin',
-        'password': 'admin123',
-        'password_hash': _hash_password('admin123'),
-        'role': 'admin',
-        'full_name': 'System Administrator',
-        'email': 'admin@neurovision.ai',
-        'department': 'IT',
-        'license': 'MD000001',
-        'institution': 'NeuroVision AI',
-        'permissions': ['manage:users', 'manage:system', 'view:audit', 'manage:models'],
-        'is_active': True,
-        'last_login': None
-    },
-    'dr_smith': {
-        'username': 'dr_smith',
-        'password': 'neuro123',
-        'password_hash': _hash_password('neuro123'),
-        'role': 'radiologist',
-        'full_name': 'Dr. John Smith',
-        'email': 'john.smith@hospital.com',
-        'department': 'Radiology',
-        'license': 'MD123456',
-        'institution': 'Mayo Clinic',
-        'permissions': ['view:all', 'analyze:all', 'report:all', 'export:all'],
-        'is_active': True,
-        'last_login': None
-    },
-    'dr_jones': {
-        'username': 'dr_jones',
-        'password': 'brain456',
-        'password_hash': _hash_password('brain456'),
-        'role': 'clinician',
-        'full_name': 'Dr. Sarah Jones',
-        'email': 'sarah.jones@hospital.com',
-        'department': 'Neurology',
-        'license': 'MD654321',
-        'institution': 'Johns Hopkins Hospital',
-        'permissions': ['view:all', 'analyze:all', 'report:view'],
-        'is_active': True,
-        'last_login': None
-    },
-    'tech_mike': {
-        'username': 'tech_mike',
-        'password': 'scan789',
-        'password_hash': _hash_password('scan789'),
-        'role': 'technician',
-        'full_name': 'Mike Johnson',
-        'email': 'mike.johnson@hospital.com',
-        'department': 'Imaging',
-        'license': 'RT789012',
-        'institution': 'Massachusetts General Hospital',
-        'permissions': ['upload', 'view:own', 'analyze:own'],
-        'is_active': True,
-        'last_login': None
-    },
-    'demo': {
-        'username': 'demo',
-        'password': 'demo123',
-        'password_hash': _hash_password('demo123'),
-        'role': 'clinician',
-        'full_name': 'Demo User',
-        'email': 'demo@neurovision.ai',
-        'department': 'Demo',
-        'license': 'MD999999',
-        'institution': 'Demo Hospital',
-        'permissions': ['view:all', 'analyze:all', 'report:view'],
-        'is_active': True,
-        'last_login': None
-    },
     'hassan': {
         'username': 'hassan',
         'password': 'hassan123!',
@@ -202,6 +160,20 @@ SAMPLE_USERS = {
         'department': 'Neurosurgery',
         'license': 'MD987654',
         'institution': 'Johns Hopkins Hospital',
+        'permissions': ['view:all', 'analyze:all', 'report:view'],
+        'is_active': True,
+        'last_login': None
+    },
+    'demo': {
+        'username': 'demo',
+        'password': 'demo123',
+        'password_hash': _hash_password('demo123'),
+        'role': 'clinician',
+        'full_name': 'Demo User',
+        'email': 'demo@neurovision.ai',
+        'department': 'Demo',
+        'license': 'MD999999',
+        'institution': 'Demo Hospital',
         'permissions': ['view:all', 'analyze:all', 'report:view'],
         'is_active': True,
         'last_login': None
@@ -258,15 +230,16 @@ AUTHENTICATION_CONFIG = {
 AUTH_CONFIG = AUTHENTICATION_CONFIG
 
 # ========================= MODEL CONFIGURATION =========================
-# Device Configuration
+# Device Configuration - Compatible with models.py and helper.py
 DEVICE_CONFIG = {
     'use_cuda': torch.cuda.is_available(),
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'mixed_precision': True,
-    'num_workers': min(8, os.cpu_count() or 1)
+    'num_workers': min(8, os.cpu_count() or 1),
+    'default_device': 'cuda' if torch.cuda.is_available() else 'cpu'  # For helper.py compatibility
 }
 
-# Model Architecture Settings
+# Model Architecture Settings - Compatible with unified models.py
 MODEL_CONFIG = {
     'segmentation': {
         'in_channels': 1,
@@ -274,7 +247,9 @@ MODEL_CONFIG = {
         'use_attention': True,
         'dropout_rate': 0.3,
         'use_deep_supervision': True,
-        'base_channels': 64
+        'base_channels': 64,
+        'encoder_name': 'efficientnet-b4',  # For BrainTumorSegmenter
+        'num_classes': 4
     },
     'classification': {
         'num_classes': 4,
@@ -283,20 +258,35 @@ MODEL_CONFIG = {
         'clinical_feature_size': 10,
         'dropout_rate': 0.4,
         'freeze_backbone': False,
-        'pretrained': True
+        'pretrained': True,
+        'base_filters': 32  # For BraTS models
+    },
+    'ensemble': {
+        'weights': {
+            'brats_segmentation': 0.35,
+            'brats_classification': 0.25,
+            'detector': 0.20,
+            'glioma_classifier': 0.15,
+            'segmenter': 0.05
+        }
     },
     'checkpoint_paths': {
-        'segmentation': 'checkpoints/segmentation_model.pth',
-        'classification': 'checkpoints/classification_model.pth'
+        'segmentation': MODELS_DIR / "brain_segmenter.pth",
+        'detector': MODELS_DIR / "brain_tumor_detector.pth",
+        'brats_segmentation': MODELS_DIR / "brats_segmentation.pth",
+        'brats_classification': MODELS_DIR / "brats_classification.pth"
     }
 }
 
-# Model Paths for pre-trained models
+# Model Paths for pre-trained models - Compatible with helper.py
 MODEL_PATHS = {
     'segmentation_model': MODELS_DIR / "unet_brain_tumor.pth",
     'classification_efficientnet': MODELS_DIR / "efficientnet_brain_tumor.pth",
     'classification_resnet': MODELS_DIR / "resnet_brain_tumor.pth",
-    'classification_densenet': MODELS_DIR / "densenet_brain_tumor.pth"
+    'classification_densenet': MODELS_DIR / "densenet_brain_tumor.pth",
+    # Unified model paths
+    'brain_tumor_detector': MODELS_DIR / "brain_tumor_detector.pth",
+    'brain_segmenter': MODELS_DIR / "brain_segmenter.pth"
 }
 
 # Training Configuration (for future model training)
@@ -316,13 +306,14 @@ TRAINING_CONFIG = {
 }
 
 # ========================= IMAGE PROCESSING CONFIGURATION =========================
-# Image Processing Parameters
+# Image Processing Parameters - Compatible with preprocessing.py
 IMAGE_CONFIG = {
     'supported_formats': ['.png', '.jpg', '.jpeg', '.dcm', '.nii', '.nii.gz'],
-    'target_size': (224, 224),
+    'target_size': (224, 224),  # For preprocess_for_model
     'voxel_size': (1.0, 1.0, 1.0),
     'normalize_intensity': True,
     'clip_percentile': (1, 99),
+    'normalization_methods': ['zscore', 'percentile', 'minmax'],  # For normalize_volume
     'enhancement_methods': {
         'clahe': {
             'clip_limit': 2.0,
@@ -334,9 +325,9 @@ IMAGE_CONFIG = {
     }
 }
 
-# Preprocessing Pipeline
+# Preprocessing Pipeline - Compatible with preprocessing.py
 PREPROCESSING_CONFIG = {
-    'skull_stripping': False, # Usually done in clinical preprocessing
+    'skull_stripping': False,
     'bias_field_correction': False,
     'registration_template': None,
     'resampling_method': 'linear',
@@ -345,45 +336,52 @@ PREPROCESSING_CONFIG = {
         'zoom_range': 0.1,
         'shift_range': 0.1,
         'flip_probability': 0.5
-    }
+    },
+    'brain_extraction_threshold': 0.1,  # For extract_brain_region
+    'small_component_min_size': 100    # For remove_small_components
 }
 
 # ========================= CLINICAL CONFIGURATION =========================
-# Tumor Classification
+# Tumor Classification - Compatible with inference.py and helper.py
 TUMOR_CLASSES = {
     0: {
         'name': 'Normal',
         'description': 'No tumor detected',
-        'color': '#28a745',
+        'color': 'green',
         'risk_level': 'Normal',
         'follow_up_months': 12,
-        'survival_estimate_days': 3650 # ~10 years
+        'survival_estimate_days': 3650
     },
     1: {
-        'name': 'Grade I',
-        'description': 'Pilocytic Astrocytoma (Low-grade)',
-        'color': '#ffc107',
+        'name': 'Grade I Glioma',
+        'description': 'Low-grade glioma',
+        'color': 'yellow',
         'risk_level': 'Low',
         'follow_up_months': 6,
-        'survival_estimate_days': 1825 # ~5 years
+        'survival_estimate_days': 2555
     },
     2: {
-        'name': 'Grade II',
-        'description': 'Diffuse Astrocytoma (Intermediate-grade)',
-        'color': '#fd7e14',
+        'name': 'Grade II-III Glioma',
+        'description': 'Intermediate-grade glioma',
+        'color': 'orange',
         'risk_level': 'Intermediate',
         'follow_up_months': 3,
-        'survival_estimate_days': 1095 # ~3 years
+        'survival_estimate_days': 1825
     },
     3: {
-        'name': 'Grade III/IV',
-        'description': 'Anaplastic Astrocytoma or Glioblastoma (High-grade)',
-        'color': '#dc3545',
+        'name': 'Grade IV Glioma',
+        'description': 'High-grade glioma (GBM)',
+        'color': 'red',
         'risk_level': 'High',
         'follow_up_months': 1,
-        'survival_estimate_days': 365 # ~1 year
+        'survival_estimate_days': 450
     }
 }
+
+# Function for inference.py compatibility
+def get_tumor_info(grade: int) -> Dict:
+    """Get tumor information for a given grade - Used in inference.py"""
+    return TUMOR_CLASSES.get(grade, TUMOR_CLASSES[0])
 
 # For backward compatibility with existing inference code
 CLINICAL_CONFIG = TUMOR_CLASSES
@@ -412,21 +410,43 @@ RANO_CRITERIA = {
 CLINICAL_PROTOCOLS = {
     'rano_criteria': RANO_CRITERIA,
     'treatment_guidelines': {
-        'Grade I': ['Surgical resection', 'Observation'],
-        'Grade II': ['Maximal safe resection', 'Radiotherapy', 'Chemotherapy (PCV or Temozolomide)'],
-        'Grade III': ['Maximal safe resection', 'Radiotherapy with concurrent and adjuvant Temozolomide'],
-        'Grade IV': ['Maximal safe resection', 'Radiotherapy with concurrent and adjuvant Temozolomide', 'Tumor Treating Fields (TTFields)']
+        'Grade I Glioma': ['Surgical resection', 'Observation'],
+        'Grade II-III Glioma': ['Maximal safe resection', 'Radiotherapy', 'Chemotherapy (PCV or Temozolomide)'],
+        'Grade IV Glioma': ['Maximal safe resection', 'Radiotherapy with concurrent and adjuvant Temozolomide', 'Tumor Treating Fields (TTFields)']
     },
     'reporting_metrics': ['volume_enhancing', 'volume_non_enhancing', 'volume_necrosis', 'largest_diameter_axial', 'rankscale_performance']
 }
 
-# Survival estimates by grade
+# Survival estimates by grade - Compatible with inference.py
 SURVIVAL_ESTIMATES = {
-    'grade_0': 3650, # ~10 years
-    'grade_1': 1825, # ~5 years
-    'grade_2': 1095, # ~3 years
-    'grade_3': 365, # ~1 year
-    'grade_4': 180 # ~6 months
+    'grade_0': 3650,
+    'grade_1': 2555,
+    'grade_2': 1825,
+    'grade_3': 450
+}
+
+# ========================= INFERENCE CONFIGURATION =========================
+# Inference settings compatible with inference.py
+INFERENCE_CONFIG = {
+    'ensemble_weights': {
+        'brats_segmentation': 0.35,
+        'brats_classification': 0.25,
+        'detector': 0.20,
+        'glioma_classifier': 0.15,
+        'segmenter': 0.05
+    },
+    'preprocessing': {
+        'target_sizes': {
+            'standard': (224, 224),
+            'highres': (384, 384),
+            'segmentation': (256, 256),
+            'brats_2d': (224, 224)
+        }
+    },
+    'clinical_feature_mapping': {
+        'idh_status': {'Unknown': 0, 'Mutant': 1, 'Wildtype': 2},
+        'mgmt_status': {'Unknown': 0, 'Methylated': 1, 'Unmethylated': 2}
+    }
 }
 
 # ========================= PERFORMANCE CONFIGURATION =========================
@@ -435,7 +455,12 @@ PERFORMANCE_CONFIG = {
         'batch_size': 4,
         'max_cache_size_gb': 2,
         'preload_models': True,
-        'gpu_memory_fraction': 0.8
+        'gpu_memory_fraction': 0.8,
+        'sliding_window': {  # For helper.py compatibility
+            'patch_size': (64, 64, 64),
+            'overlap': 0.5,
+            'batch_size': 1
+        }
     },
     'memory_management': {
         'clear_cache_after_analysis': True,
@@ -450,13 +475,13 @@ PERFORMANCE_CONFIG = {
     'monitoring': {
         'log_latency': True,
         'log_memory_usage': True,
-        'performance_report_interval': 24 # hours
+        'performance_report_interval': 24
     }
 }
 
 # ========================= EXPORT & REPORTING CONFIGURATION =========================
 REPORTING_CONFIG = {
-    'default_format': 'pdf', # 'pdf', 'html', 'dicom_sr'
+    'default_format': 'pdf',
     'include_confidence_scores': True,
     'anonymize_data': True,
     'dicom_sr_template': 'tumor_measurement_report.xml',
@@ -470,7 +495,8 @@ ANALYSIS_THRESHOLDS = {
     'max_uncertainty_score': 0.4,
     'min_tumor_volume_mm3': 50,
     'significant_growth_percentage': 25,
-    'significant_shrinkage_percentage': 50
+    'significant_shrinkage_percentage': 50,
+    'ensemble_agreement_threshold': 0.7  # For inference.py
 }
 
 # ========================= EXPORT CONFIGURATION =========================
@@ -494,11 +520,22 @@ EXPORT_CONFIG = {
     }
 }
 
-# ========================= UTILITY FUNCTIONS =========================
-def get_tumor_info(grade: int) -> Dict:
-    """Get tumor information for a given grade"""
-    return TUMOR_CLASSES.get(grade, TUMOR_CLASSES[0])
+# ========================= HELPER.PY COMPATIBILITY =========================
+# Pre-trained model URLs for helper.py
+PRETRAINED_MODELS = {
+    'segmentation': {
+        'model_url': 'https://huggingface.co/rzcoder/brain-tumor-classification/resolve/main/unet_brain_tumor.pth',
+        'input_size': (128, 128, 128),
+        'num_classes': 4
+    },
+    'classification': {
+        'efficientnet_url': 'https://huggingface.co/rzcoder/brain-tumor-classification/resolve/main/efficientnet_brain_tumor.pth',
+        'resnet_url': 'https://huggingface.co/rzcoder/brain-tumor-classification/resolve/main/resnet_brain_tumor.pth',
+        'densenet_url': 'https://huggingface.co/rzcoder/brain-tumor-classification/resolve/main/densenet_brain_tumor.pth'
+    }
+}
 
+# ========================= UTILITY FUNCTIONS =========================
 def get_rano_criteria() -> Dict:
     """Get RANO criteria"""
     return RANO_CRITERIA
@@ -526,6 +563,10 @@ def get_auth_config() -> Dict:
 def get_sample_users() -> Dict:
     """Get sample users configuration"""
     return SAMPLE_USERS
+
+def get_inference_config() -> Dict:
+    """Get inference configuration"""
+    return INFERENCE_CONFIG
 
 def validate_config() -> List[str]:
     """
@@ -649,3 +690,7 @@ if config_errors:
         logger.warning(f" - {error}")
 else:
     logger.info("Configuration validation passed")
+
+# Initialize Windows logging if needed
+if sys.platform == "win32":
+    setup_windows_logging()
