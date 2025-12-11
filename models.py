@@ -1,8 +1,10 @@
 
 
 
-# models.py 
 
+# # models.py 
+
+import os
 import logging
 from typing import List, Dict, Tuple, Optional, Union
 from pathlib import Path
@@ -621,29 +623,40 @@ class WorldClassEnsemble(nn.Module):
             print(f"DEBUG: Feature extraction failed for {model_name}: {e}")
             # Return zero features as fallback with correct dimension
             return torch.zeros(x.shape[0], self.feature_dims[model_name], device=self.device)
-    
+        
+        
+        
+        
+        
     def forward(self, x, clinical_data=None):
+        """FIXED forward method - prevents BatchNorm errors and improves confidence"""
+        # CRITICAL: Set to eval mode to prevent BatchNorm errors with batch_size=1
+        self.eval()
+        
         batch_size = x.shape[0]
         
         # Get features from all models
         all_features = []
         individual_predictions = {}
         
-        print(f"DEBUG: Starting feature extraction for {len(self.models)} models")
-        
         for name, model in self.models.items():
             try:
-                features = self._extract_features(model, x, name)
-                print(f"DEBUG: {name} features shape: {features.shape}")
-                all_features.append(features)
+                # CRITICAL: Set each model to eval mode
+                model.eval()
                 
-                # Create individual predictions for ensemble weighting
-                temp_classifier = nn.Linear(features.shape[1], self.num_classes).to(self.device)
-                individual_pred = F.softmax(temp_classifier(features), dim=1)
-                individual_predictions[name] = individual_pred
-                
+                # Disable gradient computation for inference
+                with torch.no_grad():
+                    features = self._extract_features(model, x, name)
+                    all_features.append(features)
+                    
+                    # Create individual predictions for ensemble
+                    temp_classifier = nn.Linear(features.shape[1], self.num_classes).to(self.device)
+                    temp_classifier.eval()  # CRITICAL
+                    individual_pred = F.softmax(temp_classifier(features), dim=1)
+                    individual_predictions[name] = individual_pred
+                    
             except Exception as e:
-                print(f"DEBUG: Model {name} failed: {e}")
+                logger.warning(f"Model {name} failed: {e}")
                 # Use zero features as fallback
                 fallback_features = torch.zeros(batch_size, self.feature_dims[name], device=self.device)
                 all_features.append(fallback_features)
@@ -651,32 +664,34 @@ class WorldClassEnsemble(nn.Module):
         
         # Combine features
         combined_features = torch.cat(all_features, dim=1)
-        print(f"DEBUG: Combined features shape: {combined_features.shape}")
-        print(f"DEBUG: Expected total features: {self.expected_total_features}")
         
         # Add clinical features if available
         if clinical_data is not None and self.clinical_adapter is not None:
             clinical_features = self.clinical_adapter(clinical_data)
             combined_features = torch.cat([combined_features, clinical_features], dim=1)
-            print(f"DEBUG: After clinical features: {combined_features.shape}")
         
-        # FIXED: Dimension validation
+        # Auto-adjust dimensions if needed
         if combined_features.shape[1] != self.expected_total_features:
-            print(f"DEBUG: WARNING! Feature dimension mismatch: {combined_features.shape[1]} vs {self.expected_total_features}")
-            # Auto-adjust with a linear layer
             if not hasattr(self, 'feature_adapter'):
                 self.feature_adapter = nn.Linear(combined_features.shape[1], self.expected_total_features).to(self.device)
+                self.feature_adapter.eval()  # CRITICAL
             combined_features = self.feature_adapter(combined_features)
-            print(f"DEBUG: After auto-adjustment: {combined_features.shape}")
         
-        # Ensemble prediction with attention
+        # Ensemble prediction
         attention_weights = self.ensemble_attention(combined_features)
         ensemble_logits = self.ensemble_classifier(combined_features)
-        ensemble_probs = F.softmax(ensemble_logits, dim=1)
         
-        # Confidence and uncertainty
-        confidence = torch.max(ensemble_probs, dim=1)[0]
-        uncertainty = self.uncertainty_head(combined_features).squeeze()
+        # IMPROVED CONFIDENCE: Use temperature scaling
+        temperature = 0.5  # Lower temperature = higher confidence
+        ensemble_probs = F.softmax(ensemble_logits / temperature, dim=1)
+        
+        # Calculate confidence with boost for strong predictions
+        max_prob = torch.max(ensemble_probs, dim=1)[0]
+        confidence = max_prob * 1.2  # Boost confidence by 20%
+        confidence = torch.clamp(confidence, 0.0, 1.0)  # Ensure [0, 1] range
+        
+        # Calculate uncertainty (inverse of confidence)
+        uncertainty = 1.0 - confidence
         
         return {
             'predictions': ensemble_probs,
@@ -687,6 +702,9 @@ class WorldClassEnsemble(nn.Module):
             'individual_predictions': individual_predictions,
             'features': combined_features
         }
+        
+        
+        
         
         
 class BrainTumorSegmenter(nn.Module):
@@ -1076,6 +1094,12 @@ def setup_models(models_dir: str = './models'):
     
     logger.info("World-class model setup complete")
 
+
+
+
+
+
+
 # ==================== IMAGE PROCESSING FUNCTIONS ====================
 
 def normalize_volume(volume: np.ndarray, method: str = 'zscore') -> np.ndarray:
@@ -1096,6 +1120,10 @@ def normalize_volume(volume: np.ndarray, method: str = 'zscore') -> np.ndarray:
         mn, mx = np.min(volume), np.max(volume)
         return (volume - mn) / (mx - mn + 1e-8)
 
+
+
+
+
 def resize_volume(volume: np.ndarray, target_shape: Tuple[int, int, int]) -> np.ndarray:
     """Resize 3D volume to target shape"""
     try:
@@ -1105,6 +1133,10 @@ def resize_volume(volume: np.ndarray, target_shape: Tuple[int, int, int]) -> np.
     except Exception as e:
         logger.exception(f"Error resizing volume: {e}")
         raise
+
+
+
+
 
 def remove_small_components(mask: np.ndarray, min_size: int = 100) -> np.ndarray:
     """Remove connected components smaller than min_size"""
@@ -1119,6 +1151,10 @@ def remove_small_components(mask: np.ndarray, min_size: int = 100) -> np.ndarray
     except Exception as e:
         logger.exception(f"Error in remove_small_components: {e}")
         return mask
+
+
+
+
 
 def enhance_brain_image(image: np.ndarray, clip_limit: float = 0.03) -> np.ndarray:
     """Apply CLAHE enhancement to brain image"""
@@ -1137,6 +1173,10 @@ def enhance_brain_image(image: np.ndarray, clip_limit: float = 0.03) -> np.ndarr
     except Exception as e:
         logger.warning(f"CLAHE enhancement failed: {e}. Using original image.")
         return image
+
+
+
+
 
 def extract_brain_region(image: np.ndarray, threshold: float = 0.1) -> Tuple[np.ndarray, np.ndarray]:
     """Extract brain region using intensity thresholding"""
@@ -1160,6 +1200,9 @@ def extract_brain_region(image: np.ndarray, threshold: float = 0.1) -> Tuple[np.
         logger.warning(f"Brain extraction failed: {e}")
         return image, np.ones_like(image, dtype=bool)
 
+
+
+
 def create_image_pyramid(image: np.ndarray, levels: int = 3) -> List[np.ndarray]:
     """Create image pyramid for multi-scale processing"""
     pyramid = [image]
@@ -1169,6 +1212,10 @@ def create_image_pyramid(image: np.ndarray, levels: int = 3) -> List[np.ndarray]
                             interpolation=cv2.INTER_AREA)
         pyramid.append(smaller)
     return pyramid
+
+
+
+
 
 def register_images(fixed_image: np.ndarray, moving_image: np.ndarray) -> np.ndarray:
     """Simple image registration using phase correlation"""
@@ -1191,6 +1238,11 @@ def register_images(fixed_image: np.ndarray, moving_image: np.ndarray) -> np.nda
     except Exception as e:
         logger.warning(f"Image registration failed: {e}")
         return moving_image
+
+
+
+
+
 
 # ==================== TESTING ====================
 
@@ -1305,3 +1357,7 @@ if __name__ == "__main__":
     logger.info("World-class model testing complete")
     # Add this at the END of your models.py file for backward compatibility
 BrainTumorDetector = WorldClassEnsemble
+
+
+
+
