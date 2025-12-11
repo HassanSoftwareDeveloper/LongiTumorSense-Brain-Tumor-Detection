@@ -11,13 +11,35 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 import torch
 import hashlib
+import sys
+
+
+def fix_windows_logging():
+    """Fix Unicode logging issues on Windows"""
+    if sys.platform == "win32":
+        # Force UTF-8 encoding
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    
+    # Configure logging WITHOUT emoji characters
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler('app.log', encoding='utf-8', errors='replace')
+        ]
+    )
+
+
+# Call this at module level
+fix_windows_logging()
+
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# logging_fix.py - Fixed for Windows compatibility
-import sys
 
 def setup_windows_logging():
     """Fix Unicode logging issues on Windows"""
@@ -38,10 +60,11 @@ def setup_windows_logging():
         ]
     )
 
+
 def get_safe_logger(name):
     """Get a logger that safely handles Unicode characters"""
-    logger = logging.getLogger(name)
-    return logger
+    return logging.getLogger(name)
+
 
 # ========================= SYSTEM CONFIGURATION =========================
 # Application Settings
@@ -74,7 +97,7 @@ DATABASE_CONFIG = {
 UI_CONFIG = {
     'page_config': {
         'page_title': 'LongiTumorSense Brain Tumor Detection',
-        'page_icon': '🧠',
+        'page_icon': '',  # Removed icon
         'layout': 'wide',
         'initial_sidebar_state': 'expanded'
     },
@@ -120,6 +143,7 @@ UI_CONFIG = {
 # Helper function to hash passwords - Compatible with helper.py
 def _hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
 
 SAMPLE_USERS = {
     'hassan': {
@@ -383,6 +407,7 @@ def get_tumor_info(grade: int) -> Dict:
     """Get tumor information for a given grade - Used in inference.py"""
     return TUMOR_CLASSES.get(grade, TUMOR_CLASSES[0])
 
+
 # For backward compatibility with existing inference code
 CLINICAL_CONFIG = TUMOR_CLASSES
 
@@ -540,33 +565,41 @@ def get_rano_criteria() -> Dict:
     """Get RANO criteria"""
     return RANO_CRITERIA
 
+
 def get_clinical_config() -> Dict:
     """Get clinical configuration"""
     return CLINICAL_CONFIG
+
 
 def get_device_config() -> Dict:
     """Get device configuration"""
     return DEVICE_CONFIG
 
+
 def get_model_config() -> Dict:
     """Get model configuration"""
     return MODEL_CONFIG
+
 
 def get_ui_config() -> Dict:
     """Get UI configuration"""
     return UI_CONFIG
 
+
 def get_auth_config() -> Dict:
     """Get authentication configuration"""
     return AUTH_CONFIG
+
 
 def get_sample_users() -> Dict:
     """Get sample users configuration"""
     return SAMPLE_USERS
 
+
 def get_inference_config() -> Dict:
     """Get inference configuration"""
     return INFERENCE_CONFIG
+
 
 def validate_config() -> List[str]:
     """
@@ -574,7 +607,7 @@ def validate_config() -> List[str]:
     Returns: List of error messages (empty if valid)
     """
     errors = []
-   
+    
     # Check if required directories exist
     required_dirs = [DATA_DIR, MODELS_DIR, LOGS_DIR, REPORTS_DIR, TEMP_DIR]
     for directory in required_dirs:
@@ -583,34 +616,35 @@ def validate_config() -> List[str]:
                 directory.mkdir(parents=True, exist_ok=True)
             except Exception as e:
                 errors.append(f"Failed to create directory {directory}: {e}")
-   
+    
     # Validate tumor classes
     if not TUMOR_CLASSES:
         errors.append("TUMOR_CLASSES configuration is empty")
-   
+    
     # Validate device configuration
     if not DEVICE_CONFIG.get('device'):
         errors.append("Device configuration is missing")
-   
+    
     # Validate authentication configuration
     if not AUTH_CONFIG.get('secret_key'):
         errors.append("Authentication secret key is missing")
-   
+    
     # Validate UI configuration
     if not UI_CONFIG:
         errors.append("UI configuration is missing")
-   
+    
     # Validate sample users
     if not SAMPLE_USERS:
         errors.append("SAMPLE_USERS configuration is empty")
-   
+    
     return errors
+
 
 def save_config(file_path: Path = None) -> bool:
     """Save current configuration to a file"""
     if file_path is None:
         file_path = BASE_DIR / "config_backup.json"
-   
+    
     try:
         config_dict = {
             'APP_NAME': APP_NAME,
@@ -628,16 +662,17 @@ def save_config(file_path: Path = None) -> bool:
             'PERFORMANCE_CONFIG': PERFORMANCE_CONFIG,
             'REPORTING_CONFIG': {k: str(v) if isinstance(v, Path) else v for k, v in REPORTING_CONFIG.items()}
         }
-       
+        
         with open(file_path, 'w') as f:
             json.dump(config_dict, f, indent=2)
-       
+        
         logger.info(f"Configuration saved to {file_path}")
         return True
-       
+        
     except Exception as e:
         logger.error(f"Failed to save configuration: {e}")
         return False
+
 
 def load_config(file_path: Path) -> bool:
     """Load configuration from a file"""
@@ -645,20 +680,22 @@ def load_config(file_path: Path) -> bool:
         if not file_path.exists():
             logger.error(f"Config file {file_path} does not exist")
             return False
-       
+        
         with open(file_path, 'r') as f:
             config_dict = json.load(f)
-       
+        
         # Update global variables (this is a simplified version)
         # In a real implementation, you'd want to be more careful about this
-        globals().update(config_dict)
-       
+        for key, value in config_dict.items():
+            globals()[key] = value
+        
         logger.info(f"Configuration loaded from {file_path}")
         return True
-       
+        
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
         return False
+
 
 def get_config_summary() -> Dict[str, Any]:
     """Get a summary of the current configuration"""
@@ -681,6 +718,7 @@ def get_config_summary() -> Dict[str, Any]:
         'models': list(MODEL_PATHS.keys()),
         'validation_errors': validate_config()
     }
+
 
 # Auto-validate configuration on import
 config_errors = validate_config()
