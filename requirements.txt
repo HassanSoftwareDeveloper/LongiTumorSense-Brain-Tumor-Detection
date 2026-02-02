@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # LongiTumorSense - Brain Tumor Analysis System
 # Requirements File
 
@@ -41,3 +42,42 @@ reportlab
 monai
 transformers
 efficientnet-pytorch
+=======
+# LongiTumorSense - Brain Tumor Analysis System
+# Requirements File
+
+# Core Framework
+streamlit
+
+# Deep Learning & AI
+torch==2.0.1
+torchvision==0.15.2
+numpy
+scikit-learn
+
+# Image Processing
+opencv-python
+Pillow
+matplotlib
+seaborn
+
+# Data Handling
+pandas
+pydicom
+
+# Interactive Visualizations
+plotly
+
+# Medical Imaging (Optional - for advanced features)
+nibabel
+SimpleITK
+
+# Utilities
+scipy
+tqdm
+requests
+
+# Optional: For production deployment
+gunicorn
+psutil
+>>>>>>> 6eb24a4951a6a37ffedc07cbfa6953d272a5f678
