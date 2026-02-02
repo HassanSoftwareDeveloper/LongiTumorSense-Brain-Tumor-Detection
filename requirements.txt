@@ -1,0 +1,43 @@
+# LongiTumorSense - Brain Tumor Analysis System
+# Requirements File
+
+# Core Framework
+streamlit
+
+# Deep Learning & AI
+torch==2.0.1
+torchvision==0.15.2
+numpy<2
+scikit-learn
+huggingface_hub
+
+# Image Processing
+opencv-python
+Pillow
+matplotlib
+seaborn
+scikit-image
+
+# Data Handling
+pandas
+pydicom
+
+# Interactive Visualizations
+plotly
+
+# Medical Imaging (Optional - for advanced features)
+nibabel
+SimpleITK
+
+# Utilities
+scipy
+tqdm
+requests
+
+# Optional: For production deployment
+gunicorn
+psutil
+reportlab
+monai
+transformers
+efficientnet-pytorch
