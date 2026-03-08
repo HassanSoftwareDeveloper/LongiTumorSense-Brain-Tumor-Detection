@@ -1,0 +1,26 @@
+2026-03-02 15:42:16,147 - config - INFO - Configuration validation passed
+2026-03-02 15:42:58,681 - preprocessing - INFO - Standard image loaded successfully: (734, 820)
+2026-03-02 15:42:58,682 - preprocessing - INFO - Successfully loaded image: E1.png, shape: (820, 734)
+2026-03-02 15:42:59,140 - brain_validator - INFO - EfficientNet-B4 feature extractor loaded (ImageNet weights)
+2026-03-02 15:42:59,140 - brain_validator - INFO - BrainMRIValidator ready (ML=enabled)
+2026-03-02 15:43:04,640 - preprocessing - INFO - Standard image loaded successfully: (734, 820)
+2026-03-02 15:43:04,641 - preprocessing - INFO - Successfully loaded image: E1.png, shape: (820, 734)
+2026-03-02 15:43:05,043 - brain_validator - INFO - EfficientNet-B4 feature extractor loaded (ImageNet weights)
+2026-03-02 15:43:05,043 - brain_validator - INFO - BrainMRIValidator ready (ML=enabled)
+2026-03-02 15:43:05,575 - inference - INFO - Loading World-Class Ensemble Model...
+2026-03-02 15:43:07,019 - inference - INFO - World-Class Ensemble Model loaded
+2026-03-02 15:43:07,019 - inference - INFO - Loading BraTS segmentation model...
+2026-03-02 15:43:07,219 - inference - INFO - BraTS segmentation model loaded
+2026-03-02 15:43:07,219 - inference - INFO - Loading BraTS classification model...
+2026-03-02 15:43:07,250 - inference - INFO - BraTS classification model loaded
+2026-03-02 15:43:07,250 - inference - INFO - Loading enhanced glioma classifier...
+2026-03-02 15:43:07,701 - inference - INFO - Enhanced glioma classifier loaded
+2026-03-02 15:43:09,634 - inference - INFO - Ensemble detector loaded
+2026-03-02 15:43:09,850 - inference - INFO - Segmentation model loaded
+2026-03-02 15:43:09,850 - inference - INFO - Successfully loaded 6 models
+2026-03-02 15:43:09,851 - inference - INFO - World-Class Inference Engine Initialized
+2026-03-02 15:43:09,852 - inference - INFO - Models loaded: 6
+2026-03-02 15:43:09,901 - inference - INFO - Device: cpu
+2026-03-02 15:43:13,667 - inference - INFO - World-Class Ensemble prediction completed
+2026-03-02 15:43:16,619 - inference - ERROR - Advanced tumor analysis failed: operands could not be broadcast together with shapes (4,) (4,256,256) (4,) 
+2026-03-02 15:43:16,635 - inference - INFO - Detection completed - Grade: 0, Confidence: 0.920

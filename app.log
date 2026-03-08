@@ -1,0 +1,96 @@
+2026-03-02 17:41:19,468 - config - INFO - Configuration validation passed
+2026-03-02 17:41:19,470 - fastapi - ERROR - Form data requires "python-multipart" to be installed. 
+You can install "python-multipart" with: 
+
+pip install python-multipart
+
+2026-03-02 17:42:05,189 - config - INFO - Configuration validation passed
+2026-03-02 17:48:51,009 - config - INFO - Configuration validation passed
+2026-03-02 17:58:25,876 - config - INFO - Configuration validation passed
+2026-03-02 18:05:53,880 - config - INFO - Configuration validation passed
+2026-03-02 18:06:00,277 - config - INFO - Configuration validation passed
+2026-03-03 13:08:36,325 - config - INFO - Configuration validation passed
+2026-03-03 13:14:13,998 - config - INFO - Configuration validation passed
+2026-03-04 22:55:56,636 - config - INFO - Configuration validation passed
+2026-03-04 22:57:29,027 - preprocessing - ERROR - Unsupported file format: 830357f603dfec1a3318938eb1ea44be
+2026-03-04 22:57:29,028 - preprocessing - ERROR - Error loading medical image: Unsupported file format: 830357f603dfec1a3318938eb1ea44be
+2026-03-04 23:01:26,766 - config - INFO - Configuration validation passed
+2026-03-04 23:01:52,164 - preprocessing - INFO - Standard image loaded successfully: (734, 820)
+2026-03-04 23:01:52,164 - preprocessing - INFO - Successfully loaded image: E2.png, shape: (820, 734)
+2026-03-04 23:01:52,165 - inference - INFO - Loading World-Class Ensemble Model...
+2026-03-04 23:01:54,669 - inference - INFO - World-Class Ensemble Model loaded
+2026-03-04 23:01:54,669 - inference - INFO - Loading BraTS segmentation model...
+2026-03-04 23:01:54,986 - inference - INFO - BraTS segmentation model loaded
+2026-03-04 23:01:54,986 - inference - INFO - Loading BraTS classification model...
+2026-03-04 23:01:55,038 - inference - INFO - BraTS classification model loaded
+2026-03-04 23:01:55,039 - inference - INFO - Loading enhanced glioma classifier...
+2026-03-04 23:01:56,063 - inference - INFO - Enhanced glioma classifier loaded
+2026-03-04 23:01:58,503 - inference - INFO - Ensemble detector loaded
+2026-03-04 23:01:58,889 - inference - INFO - Segmentation model loaded
+2026-03-04 23:01:58,891 - inference - INFO - Successfully loaded 6 models
+2026-03-04 23:01:58,893 - inference - INFO - World-Class Inference Engine Initialized
+2026-03-04 23:01:58,893 - inference - INFO - Models loaded: 6
+2026-03-04 23:01:58,895 - inference - INFO - Device: cpu
+2026-03-04 23:02:06,240 - inference - INFO - World-Class Ensemble prediction completed
+2026-03-04 23:02:11,593 - inference - ERROR - Advanced tumor analysis failed: operands could not be broadcast together with shapes (4,) (4,256,256) (4,) 
+2026-03-04 23:02:11,612 - inference - INFO - Detection completed - Grade: 0, Confidence: 0.920
+2026-03-04 23:03:23,672 - config - INFO - Configuration validation passed
+2026-03-04 23:03:43,594 - config - INFO - Configuration validation passed
+2026-03-04 23:03:53,894 - preprocessing - INFO - Standard image loaded successfully: (734, 820)
+2026-03-04 23:03:53,895 - preprocessing - INFO - Successfully loaded image: E2.png, shape: (820, 734)
+2026-03-04 23:03:53,895 - inference - INFO - Loading World-Class Ensemble Model...
+2026-03-04 23:03:56,200 - inference - INFO - World-Class Ensemble Model loaded
+2026-03-04 23:03:56,201 - inference - INFO - Loading BraTS segmentation model...
+2026-03-04 23:03:56,589 - inference - INFO - BraTS segmentation model loaded
+2026-03-04 23:03:56,590 - inference - INFO - Loading BraTS classification model...
+2026-03-04 23:03:56,645 - inference - INFO - BraTS classification model loaded
+2026-03-04 23:03:56,646 - inference - INFO - Loading enhanced glioma classifier...
+2026-03-04 23:03:57,695 - inference - INFO - Enhanced glioma classifier loaded
+2026-03-04 23:04:00,108 - inference - INFO - Ensemble detector loaded
+2026-03-04 23:04:00,581 - inference - INFO - Segmentation model loaded
+2026-03-04 23:04:00,582 - inference - INFO - Successfully loaded 6 models
+2026-03-04 23:04:00,583 - inference - INFO - World-Class Inference Engine Initialized
+2026-03-04 23:04:00,584 - inference - INFO - Models loaded: 6
+2026-03-04 23:04:00,586 - inference - INFO - Device: cpu
+2026-03-04 23:04:07,657 - inference - INFO - World-Class Ensemble prediction completed
+2026-03-04 23:04:13,560 - inference - ERROR - Advanced tumor analysis failed: operands could not be broadcast together with shapes (4,) (4,256,256) (4,) 
+2026-03-04 23:04:13,572 - inference - INFO - Detection completed - Grade: 0, Confidence: 0.920
+2026-03-04 23:07:34,013 - preprocessing - INFO - Standard image loaded successfully: (734, 820)
+2026-03-04 23:07:34,024 - preprocessing - INFO - Successfully loaded image: E2.png, shape: (820, 734)
+2026-03-04 23:07:34,037 - inference - INFO - Loading World-Class Ensemble Model...
+2026-03-04 23:07:43,920 - inference - INFO - World-Class Ensemble Model loaded
+2026-03-04 23:07:43,922 - inference - INFO - Loading BraTS segmentation model...
+2026-03-04 23:07:45,796 - inference - INFO - BraTS segmentation model loaded
+2026-03-04 23:07:45,797 - inference - INFO - Loading BraTS classification model...
+2026-03-04 23:07:46,308 - inference - INFO - BraTS classification model loaded
+2026-03-04 23:07:46,308 - inference - INFO - Loading enhanced glioma classifier...
+2026-03-04 23:07:48,668 - inference - INFO - Enhanced glioma classifier loaded
+2026-03-04 23:07:55,519 - inference - INFO - Ensemble detector loaded
+2026-03-04 23:07:55,889 - inference - INFO - Segmentation model loaded
+2026-03-04 23:07:55,890 - inference - INFO - Successfully loaded 6 models
+2026-03-04 23:07:55,891 - inference - INFO - World-Class Inference Engine Initialized
+2026-03-04 23:07:55,892 - inference - INFO - Models loaded: 6
+2026-03-04 23:07:55,893 - inference - INFO - Device: cpu
+2026-03-04 23:08:02,834 - inference - INFO - World-Class Ensemble prediction completed
+2026-03-04 23:08:09,464 - inference - ERROR - Advanced tumor analysis failed: operands could not be broadcast together with shapes (4,) (4,256,256) (4,) 
+2026-03-04 23:08:09,512 - inference - INFO - Detection completed - Grade: 0, Confidence: 0.920
+2026-03-04 23:13:09,163 - preprocessing - INFO - Standard image loaded successfully: (734, 820)
+2026-03-04 23:13:09,175 - preprocessing - INFO - Successfully loaded image: E1.png, shape: (820, 734)
+2026-03-04 23:13:09,198 - inference - INFO - Loading World-Class Ensemble Model...
+2026-03-04 23:13:12,849 - inference - INFO - World-Class Ensemble Model loaded
+2026-03-04 23:13:12,850 - inference - INFO - Loading BraTS segmentation model...
+2026-03-04 23:13:13,433 - inference - INFO - BraTS segmentation model loaded
+2026-03-04 23:13:13,433 - inference - INFO - Loading BraTS classification model...
+2026-03-04 23:13:13,513 - inference - INFO - BraTS classification model loaded
+2026-03-04 23:13:13,513 - inference - INFO - Loading enhanced glioma classifier...
+2026-03-04 23:13:14,338 - inference - INFO - Enhanced glioma classifier loaded
+2026-03-04 23:13:18,635 - inference - INFO - Ensemble detector loaded
+2026-03-04 23:13:19,558 - inference - INFO - Segmentation model loaded
+2026-03-04 23:13:19,565 - inference - INFO - Successfully loaded 6 models
+2026-03-04 23:13:19,566 - inference - INFO - World-Class Inference Engine Initialized
+2026-03-04 23:13:19,566 - inference - INFO - Models loaded: 6
+2026-03-04 23:13:19,570 - inference - INFO - Device: cpu
+2026-03-04 23:13:28,183 - inference - INFO - World-Class Ensemble prediction completed
+2026-03-04 23:13:34,585 - inference - ERROR - Advanced tumor analysis failed: operands could not be broadcast together with shapes (4,) (4,256,256) (4,) 
+2026-03-04 23:13:34,647 - inference - INFO - Detection completed - Grade: 0, Confidence: 0.920
+2026-03-08 14:53:59,233 - config - INFO - Configuration validation passed

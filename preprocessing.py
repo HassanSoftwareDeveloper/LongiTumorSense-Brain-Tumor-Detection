@@ -1,5 +1,3 @@
-
-
 # preprocessing.py - Unified Medical Image Preprocessing
 
 
@@ -7,7 +5,7 @@ import numpy as np
 import cv2
 from PIL import Image
 import logging
-import streamlit as st
+
 from scipy import ndimage
 from skimage import exposure, filters, morphology, measure
 
@@ -67,7 +65,7 @@ class MedicalImagePreprocessor:
             
             else:
                 logger.error(f"Unsupported file format: {file_extension}")
-                st.error(f"Unsupported file format: {file_extension}")
+                raise ValueError(f"Unsupported file format: {file_extension}")
                 return None, {}
             
             # Validate loaded image
@@ -78,7 +76,7 @@ class MedicalImagePreprocessor:
             
         except Exception as load_error:
             logger.error(f"Error loading medical image: {str(load_error)}")
-            st.error(f"Error loading medical image: {str(load_error)}")
+            raise RuntimeError(f"Error loading medical image: {str(load_error)}")
             return None, {}
 
     def _load_dicom_image(self, file_content):
@@ -640,7 +638,7 @@ import numpy as np
 import cv2
 from PIL import Image
 import logging
-import streamlit as st
+
 from scipy import ndimage
 from skimage import exposure, filters, morphology, measure
 
@@ -700,7 +698,7 @@ class MedicalImagePreprocessor:
             
             else:
                 logger.error(f"Unsupported file format: {file_extension}")
-                st.error(f"Unsupported file format: {file_extension}")
+                raise ValueError(f"Unsupported file format: {file_extension}")
                 return None, {}
             
             # Validate loaded image
@@ -711,7 +709,7 @@ class MedicalImagePreprocessor:
             
         except Exception as load_error:
             logger.error(f"Error loading medical image: {str(load_error)}")
-            st.error(f"Error loading medical image: {str(load_error)}")
+            raise RuntimeError(f"Error loading medical image: {str(load_error)}")
             return None, {}
 
     def _load_dicom_image(self, file_content):
