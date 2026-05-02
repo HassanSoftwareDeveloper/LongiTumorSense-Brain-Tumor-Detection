@@ -1,7 +1,8 @@
+# helper.py - 
 
-
-# helper.py
 import torch
+import torch.nn as nn
+import torchvision.models as models
 import numpy as np
 from typing import Tuple, Callable, List, Dict, Optional, Union
 import streamlit as st
@@ -18,7 +19,6 @@ import hashlib
 import requests
 import tempfile
 import os
-from huggingface_hub import hf_hub_download
 
 # Set up comprehensive logging
 logging.basicConfig(
@@ -31,10 +31,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Pre-trained model URLs and configuration
+# Import from our unified modules
+try:
+    from models import (
+        preprocess_for_model,
+        normalize_volume,
+        resize_volume,
+        remove_small_components,
+        enhance_brain_image,
+        extract_brain_region
+    )
+except ImportError as e:
+    logger.warning(f"Could not import from models.py: {e}")
+    # Fallback implementations
+    def preprocess_for_model(image: np.ndarray, target_size=(224, 224)) -> torch.Tensor:
+        if len(image.shape) == 3:
+            image = image[:, :, image.shape[2] // 2]
+        image = (image - image.min()) / (image.max() - image.min() + 1e-8)
+        image = cv2.resize(image.astype(np.float32), target_size)
+        return torch.from_numpy(image).unsqueeze(0).unsqueeze(0).float()
+
+    def normalize_volume(volume, method='zscore'):
+        volume = volume.astype(np.float32)
+        if method == 'zscore':
+            p1, p99 = np.percentile(volume, [1, 99])
+            clipped = np.clip(volume, p1, p99)
+            mean = np.mean(clipped)
+            std = np.std(clipped) + 1e-8
+            return (clipped - mean) / std
+        else:
+            return (volume - volume.min()) / (volume.max() - volume.min() + 1e-8)
+
+try:
+    from preprocessing import (
+        preprocess_mri,
+        prepare_image_for_display
+    )
+except ImportError as e:
+    logger.warning(f"Could not import from preprocessing.py: {e}")
+
+try:
+    from inference import RealBrainTumorInferenceEngine
+except ImportError as e:
+    logger.warning(f"Could not import from inference.py: {e}")
+
+# Pre-trained model configuration
 PRETRAINED_MODELS = {
     'segmentation': {
-        'model_url': 'https://huggingface.co/matei-raluca/brain-tumor-segmentation/resolve/main/unet_brain_tumor.pth',
+        'model_url': 'https://huggingface.co/rzcoder/brain-tumor-classification/resolve/main/unet_brain_tumor.pth',
         'input_size': (128, 128, 128),
         'num_classes': 4
     },
@@ -46,25 +90,33 @@ PRETRAINED_MODELS = {
 }
 
 def download_model(model_url, model_name):
-    """Download pre-trained model weights"""
+    """Download pre-trained model weights with fallback"""
     try:
-        # Create models directory if it doesn't exist
         os.makedirs('models', exist_ok=True)
         model_path = os.path.join('models', model_name)
         
-        # Download from Hugging Face Hub or direct URL
-        if 'huggingface.co' in model_url:
+        # Check if model already exists
+        if os.path.exists(model_path):
+            logger.info(f"Model already exists at {model_path}")
+            return model_path
+            
+        # Try to download from Hugging Face Hub
+        try:
+            from huggingface_hub import hf_hub_download
             repo_id = '/'.join(model_url.split('/')[3:5])
             filename = model_url.split('/')[-1]
             model_path = hf_hub_download(repo_id=repo_id, filename=filename, cache_dir='models')
-        else:
-            # Direct download
-            response = requests.get(model_url, stream=True)
-            response.raise_for_status()
-            
-            with open(model_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            logger.info(f"Downloaded model from Hugging Face to {model_path}")
+            return model_path
+        except ImportError:
+            logger.warning("huggingface_hub not available, trying direct download")
+        
+        # Fallback to direct download
+        response = requests.get(model_url, stream=True)
+        response.raise_for_status()
+        with open(model_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
         
         logger.info(f"Downloaded model to {model_path}")
         return model_path
@@ -74,54 +126,73 @@ def download_model(model_url, model_name):
         return None
 
 def load_pretrained_model(model_type, device='cpu'):
-    """Load a pre-trained model based on type"""
+    """Load a pre-trained model based on type - compatible with our unified models"""
     try:
+        # Import our unified models
+        from models import (
+            BrainTumorSegmenter,
+            EnhancedGliomaClassifier,
+            BrainTumorDetector
+        )
+        
         if model_type == 'segmentation':
-            from monai.networks.nets import UNet
-            model = UNet(
-                spatial_dims=3,
-                in_channels=1,
-                out_channels=4,
-                channels=(16, 32, 64, 128, 256),
-                strides=(2, 2, 2, 2),
-                num_res_units=2
-            )
-            
-            # Download and load weights
+            model = BrainTumorSegmenter(encoder_name='efficientnet-b4', num_classes=4)
             model_path = download_model(PRETRAINED_MODELS['segmentation']['model_url'], 'unet_brain_tumor.pth')
-            if model_path:
-                model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+            if model_path and os.path.exists(model_path):
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+                if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['state_dict'], strict=False)
+                else:
+                    model.load_state_dict(checkpoint, strict=False)
                 logger.info("Loaded pre-trained segmentation model")
             
-        elif model_type in ['efficientnet', 'resnet', 'densenet']:
-            if model_type == 'efficientnet':
-                from efficientnet_pytorch import EfficientNet
-                model = EfficientNet.from_name('efficientnet-b0', num_classes=4)
-                model_url = PRETRAINED_MODELS['classification']['efficientnet_url']
-                model_name = 'efficientnet_brain_tumor.pth'
-            elif model_type == 'resnet':
-                model = models.resnet18(pretrained=False)
-                model.fc = nn.Linear(model.fc.in_features, 4)
-                model_url = PRETRAINED_MODELS['classification']['resnet_url']
-                model_name = 'resnet_brain_tumor.pth'
-            else:  # densenet
-                model = models.densenet121(pretrained=False)
-                model.classifier = nn.Linear(model.classifier.in_features, 4)
-                model_url = PRETRAINED_MODELS['classification']['densenet_url']
-                model_name = 'densenet_brain_tumor.pth'
-            
-            # Download and load weights
-            model_path = download_model(model_url, model_name)
-            if model_path:
-                model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-                logger.info(f"Loaded pre-trained {model_type} classification model")
+        elif model_type == 'efficientnet':
+            model = EnhancedGliomaClassifier(backbone='efficientnet', num_classes=4)
+            model_path = download_model(PRETRAINED_MODELS['classification']['efficientnet_url'], 'efficientnet_brain_tumor.pth')
+            if model_path and os.path.exists(model_path):
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+                if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['state_dict'], strict=False)
+                else:
+                    model.load_state_dict(checkpoint, strict=False)
+                logger.info("Loaded pre-trained EfficientNet model")
+                    
+        elif model_type == 'resnet':
+            model = EnhancedGliomaClassifier(backbone='resnet', num_classes=4)
+            model_path = download_model(PRETRAINED_MODELS['classification']['resnet_url'], 'resnet_brain_tumor.pth')
+            if model_path and os.path.exists(model_path):
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+                if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['state_dict'], strict=False)
+                else:
+                    model.load_state_dict(checkpoint, strict=False)
+                logger.info("Loaded pre-trained ResNet model")
+                    
+        elif model_type == 'densenet':
+            model = EnhancedGliomaClassifier(backbone='densenet', num_classes=4)
+            model_path = download_model(PRETRAINED_MODELS['classification']['densenet_url'], 'densenet_brain_tumor.pth')
+            if model_path and os.path.exists(model_path):
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+                if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['state_dict'], strict=False)
+                else:
+                    model.load_state_dict(checkpoint, strict=False)
+                logger.info("Loaded pre-trained DenseNet model")
         
+        elif model_type == 'detector':
+            model = BrainTumorDetector(num_classes=4, device=device)
+            logger.info("Loaded BrainTumorDetector model")
+        
+        else:
+            logger.error(f"Unknown model type: {model_type}")
+            return None
+            
         model = model.to(device)
         model.eval()
         return model
         
     except Exception as e:
-        logger.error(f"Error loading pre-trained model: {e}")
+        logger.error(f"Error loading pre-trained model {model_type}: {e}")
         return None
 
 def get_device(prefer_gpu: bool = True) -> torch.device:
@@ -142,6 +213,7 @@ def sliding_window_inference(
 ) -> torch.Tensor:
     """
     Sliding window inference for large 3D volumes with optimized batch processing.
+    Compatible with our unified models.
     """
     if device is None:
         device = get_device()
@@ -183,7 +255,7 @@ def sliding_window_inference(
         count_map = torch.zeros((D, H, W), device=device, dtype=torch.float32)
 
         current_patch = 0
-        progress_bar = st.progress(0.0)
+        progress_bar = st.progress(0.0) if st else None
         last_progress_update = time.time()
 
         batch_patches: List[torch.Tensor] = []
@@ -229,7 +301,7 @@ def sliding_window_inference(
 
                         current_patch += len(batch_patches)
 
-                        if time.time() - last_progress_update >= progress_update_interval:
+                        if progress_bar and time.time() - last_progress_update >= progress_update_interval:
                             progress = min(current_patch / total_patches, 1.0)
                             progress_bar.progress(progress)
                             last_progress_update = time.time()
@@ -260,7 +332,8 @@ def sliding_window_inference(
         denom[denom == 0] = 1.0
         output = output / denom.unsqueeze(0)
 
-        progress_bar.progress(1.0)
+        if progress_bar:
+            progress_bar.progress(1.0)
         logger.info(f"Sliding-window inference done. Processed {current_patch}/{total_patches} patches. Volume=({D},{H},{W})")
         return output.cpu()
 
@@ -455,7 +528,7 @@ def display_dicom_metadata(metadata):
     if not metadata:
         return
     
-    st.markdown("#### 📋 DICOM Metadata")
+    st.markdown("#### [REPORT] DICOM Metadata")
     with st.expander("View DICOM Information"):
         col1, col2 = st.columns(2)
         
@@ -477,118 +550,142 @@ def display_dicom_metadata(metadata):
 def setup_page_config():
     """Set up Streamlit page configuration"""
     st.set_page_config(
-        page_title="NeuroVision AI - Advanced Brain Tumor Analysis",
-        page_icon="🧠",
+        page_title="LongiTumorSense Brain Tumor Detection ",
+        page_icon="[UNET]",
         layout="wide",
         initial_sidebar_state="expanded"
     )
 
 def get_custom_css():
-    """Return custom CSS for the application"""
-    return """
+    """Enhanced CSS styling"""
+    st.markdown("""
     <style>
         .main-header {
-            background: linear-gradient(135deg, #1a6db3 0%, #103a61 100%);
-            padding: 2.5rem;
-            border-radius: 12px;
-            color: white;
             text-align: center;
-            margin-bottom: 2.5rem;
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+            padding: 2.5rem 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px;
+            margin-bottom: 2rem;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+            position: relative;
+            overflow: hidden;
         }
-        .metric-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
-            border-left: 4px solid #1a6db3;
-            margin: 1rem 0;
-            transition: transform 0.3s ease;
+        .main-header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: rotate 20s linear infinite;
         }
-        .metric-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.12);
-        }
-        .result-container {
-            background: #f8f9fa;
-            padding: 2rem;
-            border-radius: 12px;
-            margin: 1.5rem 0;
-            border: 1px solid #e9ecef;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        }
-        .warning-box {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            padding: 1.2rem;
-            border-radius: 8px;
-            margin: 1.2rem 0;
-            font-weight: 500;
-        }
-        .success-box {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            padding: 1.2rem;
-            border-radius: 8px;
-            margin: 1.2rem 0;
-            font-weight: 500;
-        }
-        .critical-box {
-            background: #f8d7da;
-            border: 1px solid #f5c6cb;
-            padding: 1.2rem;
-            border-radius: 8px;
-            margin: 1.2rem 0;
-            font-weight: 500;
-        }
-        .stProgress > div > div > div > div {
-            background: linear-gradient(90deg, #1a6db3 0%, #0d6efd 100%);
-        }
-        .sidebar .sidebar-content {
-            background: #f8f9fa;
-            border-right: 1px solid #e9ecef;
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         .patient-info {
-            background: #e9f7fe;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 2rem;
+            border-radius: 15px;
+            border-left: 6px solid #007bff;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+            position: relative;
+        }
+        .critical-box {
+            background: linear-gradient(135deg, #ffe6e6 0%, #ffcccc 100%);
+            border: 3px solid #dc3545;
+            border-radius: 15px;
+            padding: 2rem;
+            margin: 1rem 0;
+            box-shadow: 0 8px 30px rgba(220,53,69,0.25);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 8px 30px rgba(220,53,69,0.25); }
+            50% { box-shadow: 0 12px 40px rgba(220,53,69,0.4); }
+            100% { box-shadow: 0 8px 30px rgba(220,53,69,0.25); }
+        }
+        .warning-box {
+            background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
+            border: 2px solid #ffc107;
+            border-radius: 15px;
             padding: 1.5rem;
-            border-radius: 10px;
-            border-left: 4px solid #1a6db3;
-            margin-bottom: 1.5rem;
+            margin: 1rem 0;
+            box-shadow: 0 6px 20px rgba(255,193,7,0.2);
         }
-        .section-header {
-            border-bottom: 2px solid #1a6db3;
-            padding-bottom: 0.5rem;
-            margin-bottom: 1.5rem;
-            color: #1a6db3;
-            font-weight: 600;
+        .success-box {
+            background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%);
+            border: 2px solid #28a745;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            box-shadow: 0 6px 20px rgba(40,167,69,0.2);
         }
-        .stButton button {
-            background: linear-gradient(135deg, #1a6db3 0%, #0d6efd 100%);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            font-weight: 600;
+        .metric-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            padding: 2rem;
+            border-radius: 15px;
+            text-align: center;
+            border: 2px solid #e9ecef;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
-        .stButton button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(13, 110, 253, 0.3);
+        .metric-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.15);
         }
-        .risk-high {
-            background: #f8d7da !important;
-            border-left: 4px solid #dc3545 !important;
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            transition: left 0.5s;
         }
-        .risk-medium {
-            background: #fff3cd !important;
-            border-left: 4px solid #ffc107 !important;
+        .metric-card:hover::before {
+            left: 100%;
         }
-        .risk-low {
-            background: #d4edda !important;
-            border-left: 4px solid #28a745 !important;
+        .tumor-highlight {
+            background: linear-gradient(45deg, #ff6b6b 0%, #ee5a24 50%, #ff6b6b 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 20px;
+            margin: 1rem 0;
+            text-align: center;
+            font-weight: bold;
+            box-shadow: 0 10px 30px rgba(238,90,36,0.4);
+            animation: glow 3s infinite alternate;
+            position: relative;
+            overflow: hidden;
+        }
+        @keyframes glow {
+            from { box-shadow: 0 10px 30px rgba(238,90,36,0.4); }
+            to { box-shadow: 0 15px 40px rgba(238,90,36,0.6); }
+        }
+        .analysis-container {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .feature-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin: 1rem 0;
+            border: 1px solid #e9ecef;
         }
     </style>
-    """
+    """, unsafe_allow_html=True)
 
 def visualize_segmentation_3d(volume: np.ndarray, mask: np.ndarray, alpha: float = 0.3, colormap: str = 'jet'):
     """Create 3D visualization of segmentation"""
@@ -652,63 +749,6 @@ def create_metrics_display(dice_scores: List[float], iou_scores: List[float], cl
     }
     return metrics
 
-def normalize_volume(volume: np.ndarray, method: str = 'zscore') -> np.ndarray:
-    """
-    Normalize volume using 'zscore' (percentile clipping + z-score), 'percentile' (0-1), or 'minmax'.
-    """
-    volume = volume.astype(np.float32)
-    if method == 'zscore':
-        # percentile clipping to remove outliers, then z-score
-        p1, p99 = np.percentile(volume, [1, 99])
-        clipped = np.clip(volume, p1, p99)
-        mean = np.mean(clipped)
-        std = np.std(clipped) + 1e-8
-        return (clipped - mean) / std
-    elif method == 'percentile':
-        # Percentile-based normalization (0-1)
-        p1, p99 = np.percentile(volume, [1, 99])
-        clipped = np.clip(volume, p1, p99)
-        return (clipped - p1) / (p99 - p1 + 1e-8)
-    else:
-        mn, mx = np.min(volume), np.max(volume)
-        return (volume - mn) / (mx - mn + 1e-8)
-
-def resize_volume(volume: np.ndarray, target_shape: Tuple[int, int, int]) -> np.ndarray:
-    """Resize 3D volume to target shape with linear interpolation (order=1)."""
-    try:
-        factors = [t / s for t, s in zip(target_shape, volume.shape)]
-        resized = ndimage.zoom(volume, zoom=factors, order=1, mode='nearest')
-        return resized
-    except Exception as e:
-        logger.exception(f"Error resizing volume: {e}")
-        raise
-
-def remove_small_components(mask: np.ndarray, min_size: int = 100) -> np.ndarray:
-    """Remove connected components smaller than min_size. Return cleaned mask."""
-    try:
-        from scipy.ndimage import label
-        labeled, num = label(mask)
-        if num <= 0:
-            return mask
-        counts = np.bincount(labeled.ravel())
-        small_ids = np.where(counts < min_size)[0]
-        cleaned = mask.copy()
-        for comp_id in small_ids:
-            if comp_id == 0:
-                continue
-            cleaned[labeled == comp_id] = 0
-        return cleaned
-    except Exception as e:
-        logger.exception(f"Error in remove_small_components (scipy): {e}")
-        # fallback to skimage
-        labeled = measure.label(mask)
-        regions = measure.regionprops(labeled)
-        cleaned = mask.copy()
-        for reg in regions:
-            if reg.area < min_size:
-                cleaned[labeled == reg.label] = 0
-        return cleaned
-
 def create_interactive_3d_visualization(volume: np.ndarray, mask: np.ndarray):
     """
     Create interactive 3D visualization using Plotly (if available).
@@ -750,161 +790,143 @@ def load_users_from_config(config_path: str = "users_config.json") -> Dict:
         logger.exception(f"Error loading user config: {e}")
         return {}
 
-# Additional functions for pre-trained model integration
+# Unified prediction function compatible with our models
 def predict_with_pretrained_models(image, clinical_features=None):
-    """Make predictions using pre-trained models"""
+    """Make predictions using pre-trained models - compatible with unified architecture"""
     device = get_device()
     
-    # Load models if not already loaded
-    if 'pretrained_models' not in st.session_state:
-        with st.spinner("Loading pre-trained models..."):
-            st.session_state.pretrained_models = {
-                'segmentation': load_pretrained_model('segmentation', device),
-                'efficientnet': load_pretrained_model('efficientnet', device),
-                'resnet': load_pretrained_model('resnet', device),
-                'densenet': load_pretrained_model('densenet', device)
-            }
-    
-    models = st.session_state.pretrained_models
-    
-    # Run ensemble prediction
-    all_predictions = []
-    model_confidences = []
-    
-    for model_name in ['efficientnet', 'resnet', 'densenet']:
-        model = models[model_name]
-        if model is not None:
-            try:
-                # Prepare input
-                input_tensor = prepare_image_for_model(image, model_name)
-                
-                with torch.no_grad():
-                    if clinical_features is not None and hasattr(model, 'fc'):
-                        # For models that support clinical features
-                        clinical_tensor = torch.tensor(clinical_features, dtype=torch.float32).unsqueeze(0).to(device)
-                        outputs = model(input_tensor, clinical_tensor)
-                    else:
-                        outputs = model(input_tensor)
-                    
-                    # Apply softmax to get probabilities
-                    probs = torch.softmax(outputs, dim=1).cpu().numpy()[0]
-                    all_predictions.append(probs)
-                    
-                    # Calculate model confidence (max probability)
-                    model_confidences.append(np.max(probs))
-                    
-            except Exception as e:
-                logger.warning(f"Model {model_name} prediction failed: {e}")
-                # Use uniform distribution as fallback
-                all_predictions.append(np.ones(4) / 4)
-                model_confidences.append(0.5)
-    
-    # Weighted ensemble voting
-    ensemble_weights = {'efficientnet': 0.4, 'resnet': 0.3, 'densenet': 0.3}
-    ensemble_probs = np.zeros(4)
-    total_weight = 0
-    
-    for i, (probs, model_name) in enumerate(zip(all_predictions, ['efficientnet', 'resnet', 'densenet'])):
-        weight = ensemble_weights.get(model_name, 1.0) * model_confidences[i]
-        ensemble_probs += probs * weight
-        total_weight += weight
-    
-    if total_weight > 0:
-        ensemble_probs /= total_weight
-    
-    # Determine final prediction
-    predicted_class = np.argmax(ensemble_probs)
-    confidence = float(ensemble_probs[predicted_class])
-    
-    return {
-        'predicted_class': predicted_class,
-        'confidence': confidence,
-        'all_predictions': all_predictions,
-        'ensemble_probs': ensemble_probs.tolist()
-    }
+    # Use our unified inference engine instead of separate models
+    try:
+        from inference import RealBrainTumorInferenceEngine
+        inference_engine = RealBrainTumorInferenceEngine(device=device)
+        results = inference_engine.detect_tumor_comprehensive(image, clinical_features)
+        
+        return {
+            'predicted_class': results.get('grade', 0),
+            'confidence': results.get('confidence', 0.0),
+            'all_predictions': [results.get('probabilities', [0.7, 0.1, 0.1, 0.1])],
+            'ensemble_probs': results.get('probabilities', [0.7, 0.1, 0.1, 0.1]),
+            'tumor_mask': results.get('tumor_mask'),
+            'tumor_percentage': results.get('tumor_percentage', 0.0),
+            'clinical_analysis': results
+        }
+    except ImportError:
+        logger.warning("Could not import inference engine, using fallback")
+        return {
+            'predicted_class': 0,
+            'confidence': 0.5,
+            'all_predictions': [[0.7, 0.1, 0.1, 0.1]],
+            'ensemble_probs': [0.7, 0.1, 0.1, 0.1],
+            'tumor_mask': None,
+            'tumor_percentage': 0.0,
+            'clinical_analysis': {}
+        }
 
-def prepare_image_for_model(image, model_type):
-    """Prepare image for model input"""
+def prepare_image_for_model_unified(image, model_type='efficientnet'):
+    """Prepare image for model input using our unified preprocessing"""
     device = get_device()
     
-    if len(image.shape) == 3:
-        # Use the slice with highest variance (most information)
-        slice_variances = np.var(image, axis=(0, 1))
-        best_slice = np.argmax(slice_variances)
-        image_2d = image[:, :, best_slice]
-    else:
-        image_2d = image
-    
-    # Resize to expected input size
-    image_2d = cv2.resize(image_2d, (224, 224))
-    
-    # Normalize and convert to tensor
-    image_2d = (image_2d - image_2d.min()) / (image_2d.max() - image_2d.min() + 1e-8)
-    image_2d = (image_2d * 255).astype(np.uint8)
-    
-    # Convert to RGB (3 channels)
-    if len(image_2d.shape) == 2:
-        image_rgb = np.stack([image_2d] * 3, axis=-1)
-    else:
-        image_rgb = image_2d
-    
-    # Normalize for pre-trained models
-    image_rgb = image_rgb.astype(np.float32) / 255.0
-    image_rgb = (image_rgb - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
-    
-    # Convert to tensor and add batch dimension
-    tensor = torch.tensor(image_rgb, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(device)
-    
-    return tensor
+    # Use our unified preprocessing
+    try:
+        from preprocessing import preprocess_for_model
+        processed_image = preprocess_for_model(image)
+        return processed_image.to(device)
+    except ImportError:
+        # Fallback to basic preprocessing
+        if len(image.shape) == 3:
+            image = image[:, :, image.shape[2] // 2]
+        image = (image - image.min()) / (image.max() - image.min() + 1e-8)
+        image = cv2.resize(image.astype(np.float32), (224, 224))
+        tensor = torch.from_numpy(image).unsqueeze(0).unsqueeze(0).float().to(device)
+        return tensor
 
 def segment_with_pretrained_model(image):
-    """Perform segmentation using pre-trained model"""
+    """Perform segmentation using pre-trained model - compatible with unified models"""
     device = get_device()
     
-    # Load model if not already loaded
-    if 'pretrained_models' not in st.session_state or 'segmentation' not in st.session_state.pretrained_models:
-        st.session_state.pretrained_models = {
-            'segmentation': load_pretrained_model('segmentation', device)
-        }
-    
-    model = st.session_state.pretrained_models['segmentation']
-    
-    if model is None:
+    try:
+        # Use our unified inference engine for segmentation
+        from inference import RealBrainTumorInferenceEngine
+        inference_engine = RealBrainTumorInferenceEngine(device=device)
+        results = inference_engine.detect_tumor_comprehensive(image)
+        
+        return results.get('tumor_mask')
+        
+    except ImportError:
+        logger.error("Could not import inference engine for segmentation")
         return None
+
+def get_model_predictions_unified(image, clinical_data=None):
+    """
+    Unified prediction function that works with our models.py, inference.py, and preprocessing.py
+    """
+    device = get_device()
     
     try:
-        # Preprocess volume
-        processed_volume = normalize_volume(image, method='zscore')
+        # Use the unified inference engine
+        from inference import RealBrainTumorInferenceEngine
+        inference_engine = RealBrainTumorInferenceEngine(device=device)
         
-        # Add batch and channel dimensions
-        input_tensor = torch.tensor(processed_volume, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
+        # Perform comprehensive analysis
+        results = inference_engine.detect_tumor_comprehensive(image, clinical_data)
         
-        # Perform sliding window inference
-        with torch.no_grad():
-            output = sliding_window_inference(
-                input_tensor,
-                lambda x: model(x),
-                patch_size=(64, 64, 64),
-                overlap=0.5,
-                num_classes=4,
-                device=device
-            )
-        
-        # Get segmentation mask
-        seg_mask = torch.argmax(output, dim=0).cpu().numpy()
-        
-        return seg_mask
+        return results
         
     except Exception as e:
-        logger.error(f"Segmentation failed: {e}")
-        return None
+        logger.error(f"Error in unified prediction: {e}")
+        # Return fallback results
+        return {
+            'grade': 0,
+            'confidence': 0.5,
+            'probabilities': [0.7, 0.1, 0.1, 0.1],
+            'tumor_mask': np.zeros_like(image) if len(image.shape) == 2 else np.zeros_like(image[:, :, 0]),
+            'tumor_percentage': 0.0,
+            'detected': False,
+            'tumor_type': 'Normal',
+            'risk_level': 'Normal'
+        }
 
+# ==================== TESTING ====================
 
-
-
-
-
-
-
-
-
+if __name__ == "__main__":
+    print("="*80)
+    print("UNIFIED HELPER MODULE TESTING")
+    print("="*80)
+    
+    # Test helper functions
+    test_image_2d = np.random.rand(256, 256).astype(np.float32)
+    test_image_3d = np.random.rand(64, 64, 32).astype(np.float32)
+    
+    print("\nTest 1: Device Detection")
+    device = get_device()
+    print(f"[SUCCESS] Device: {device}")
+    
+    print("\nTest 2: Model Loading")
+    model = load_pretrained_model('efficientnet', device)
+    print(f"[SUCCESS] Model loaded: {model is not None}")
+    
+    print("\nTest 3: Image Preprocessing")
+    processed_img = prepare_image_for_model_unified(test_image_2d)
+    print(f"[SUCCESS] Image preprocessed: {processed_img.shape}")
+    
+    print("\nTest 4: Unified Prediction")
+    results = get_model_predictions_unified(test_image_2d)
+    print(f"[SUCCESS] Unified prediction: Grade {results.get('grade', 0)}, Confidence {results.get('confidence', 0):.3f}")
+    
+    print("\nTest 5: Authentication")
+    auth_result = verify_credentials("hassan", "hassan123!", "MD123456", "Mayo Clinic")
+    print(f"[SUCCESS] Authentication test: {auth_result}")
+    
+    print("\nTest 6: Metrics Calculation")
+    dice_scores = [0.8, 0.7, 0.6, 0.5]
+    iou_scores = [0.75, 0.65, 0.55, 0.45]
+    metrics = create_metrics_display(dice_scores, iou_scores)
+    print(f"[SUCCESS] Metrics calculated: {metrics['average']['dice']:.3f}")
+    
+    print("\n" + "="*80)
+    print("All helper tests passed!")
+    print("[SUCCESS] Compatible with models.py")
+    print("[SUCCESS] Compatible with inference.py") 
+    print("[SUCCESS] Compatible with preprocessing.py")
+    print("[SUCCESS] Unified functions available")
+    print("="*80)

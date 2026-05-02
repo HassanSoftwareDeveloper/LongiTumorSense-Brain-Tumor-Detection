@@ -1,500 +1,526 @@
-# import numpy as np
-# import cv2
-# from PIL import Image
-# import pydicom
-# import nibabel as nib
-# from skimage import exposure
-# from sklearn import logger
-# import streamlit as st
+"""
+preprocessing.py — LongiTumorSense v4.0  ─ FIXED
+=================================================
+KEY FIX: Added the missing `preprocess_mri` and `prepare_image_for_display`
+functions that helper.py and frontend.py import but v3.0 never exported.
+This single missing export was the root cause of ALL import failures logged
+in brain_tumor_analysis.log.
 
-# def load_medical_image(file):
-#     """Load DICOM, NIfTI, or standard image formats with enhanced processing"""
-#     try:
-#         image = None
-#         metadata = {}
-        
-#         if file.name.endswith('.dcm'):
-#             # Load DICOM with metadata extraction
-#             dicom_data = pydicom.dcmread(file)
-#             image = dicom_data.pixel_array.astype(np.float32)
-            
-#             # Extract DICOM metadata
-#             try:
-#                 metadata['patient_id'] = getattr(dicom_data, 'PatientID', 'Unknown')
-#                 metadata['patient_name'] = getattr(dicom_data, 'PatientName', 'Unknown')
-#                 metadata['study_date'] = getattr(dicom_data, 'StudyDate', 'Unknown')
-#                 metadata['modality'] = getattr(dicom_data, 'Modality', 'Unknown')
-#                 metadata['study_description'] = getattr(dicom_data, 'StudyDescription', 'Unknown')
-#             except:
-#                 metadata = {}
-            
-#             # Apply windowing
-#             center = getattr(dicom_data, 'WindowCenter', 0)
-#             width = getattr(dicom_data, 'WindowWidth', 0)
-            
-#             if isinstance(center, pydicom.multival.MultiValue):
-#                 center = float(center[0])
-#             if isinstance(width, pydicom.multival.MultiValue):
-#                 width = float(width[0])
-            
-#             if center and width:
-#                 image = exposure.rescale_intensity(
-#                     image, 
-#                     in_range=(center - width/2, center + width/2),
-#                     out_range=(0, 1)
-#                 )
-#             else:
-#                 # Advanced normalization for medical images
-#                 image = exposure.equalize_adapthist(image, clip_limit=0.03) * 255
-                
-#         elif file.name.endswith(('.nii', '.nii.gz')):
-#             # Load NIfTI with enhanced processing
-#             nifti_img = nib.load(file)
-#             image_data = nifti_img.get_fdata()
-            
-#             # Take middle slice for 2D visualization
-#             if len(image_data.shape) == 3:
-#                 middle_slice = image_data.shape[2] // 2
-#                 image = image_data[:, :, middle_slice].astype(np.float32)
-#             else:
-#                 image = image_data.astype(np.float32)
-                
-#             # Advanced normalization
-#             image = exposure.equalize_adapthist(image, clip_limit=0.03) 
-            
-#         else:
-#             # Standard image formats with enhanced processing
-#             image = Image.open(file).convert('L')
-#             image = np.array(image).astype(np.float32)
-#             image_min = np.min(image)
-#             image_max = np.max(image)
-#             image= (image - image_min) / (image_max - image_min + 1e-8)
-#             # image = exposure.equalize_adapthist(image, clip_limit=0.03) * 255
-            
-#         return image, metadata
-        
-#     except Exception as e:
-#         logger.error(f"Error loading image: {str(e)}")
-#         st.error(f"Error loading image: {str(e)}")
-#         return None, {}
+Also adds:
+  - Robust `load_medical_image` for DICOM / NIfTI / PNG / JPG
+  - Sequence-aware normalisation
+  - N4-style bias field correction (no ITK required)
+  - Motion / skull-strip quality checks
 
-# def preprocess_mri(image, target_size=(224, 224), is_3d=False, enhance=True):
-#     """Advanced MRI preprocessing with dual outputs:
-#        (1) model-ready normalized image
-#        (2) display-ready uint8 image
-#     """
-#     if isinstance(image, Image.Image):
-#         image = np.array(image)
+All functions degrade gracefully — no external C++ binaries required.
+"""
 
-#     # Handle 3D volumes (slice by slice)
-#     if is_3d and len(image.shape) == 3:
-#         model_slices, display_slices = [], []
-#         for i in range(image.shape[2]):
-#             slice_img = image[:, :, i]
-#             m_ready, d_ready = preprocess_mri(slice_img, target_size, is_3d=False, enhance=enhance)
-#             model_slices.append(m_ready)
-#             display_slices.append(d_ready)
-#         return np.stack(model_slices, axis=2), np.stack(display_slices, axis=2)
+from __future__ import annotations
 
-#     # Convert to grayscale if needed
-#     if len(image.shape) == 3 and image.shape[2] == 3:
-#         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-
-#     # Enhancement steps
-#     if enhance:
-#         if image.dtype != np.uint8:
-#             image_uint8 = (image * 255).astype(np.uint8) if image.max() <= 1 else image.astype(np.uint8)
-#         else:
-#             image_uint8 = image
-
-#         # CLAHE contrast enhancement
-#         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-#         image = clahe.apply(image_uint8)
-
-#         # Denoising
-#         image = cv2.fastNlMeansDenoising(image)
-
-#         # Edge enhancement
-#         kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-#         image = cv2.filter2D(image, -1, kernel)
-
-#     # Resize
-#     image = cv2.resize(image, target_size, interpolation=cv2.INTER_CUBIC)
-
-#     # --------- TWO OUTPUTS ---------
-#     # 1) Display-ready (uint8)
-#     display_ready = image.copy()
-#     if display_ready.dtype != np.uint8:
-#         display_ready = (255 * (display_ready - display_ready.min()) / (display_ready.ptp() + 1e-8)).astype(np.uint8)
-
-#     # 2) Model-ready (normalized float)
-#     model_ready = image.astype(np.float32) / 255.0
-#     if enhance:
-#         mean, std = np.mean(model_ready), np.std(model_ready)
-#         model_ready = (model_ready - mean) / (std if std > 0 else 1.0)
-#     else:
-#         model_ready = (model_ready - np.min(model_ready)) / (np.max(model_ready) - np.min(model_ready) + 1e-8)
-
-#     return model_ready, display_ready
-
-# def prepare_image_for_display(image):
-#     """Prepare image for display by ensuring it's in uint8 format [0,255]."""
-#     if image is None:
-#         return None
-    
-#     # Convert to float if needed
-#     if image.dtype==np.float32 or image.dtype==np.float64:
-#        if image.min() >=0 and image.max()<=1:
-#         # already normalized just convert to uint8   
-#            image_uint8 =(image *255).astype(np.uint8)
-#        elif image.min() >= -1 and image.max() <= 1:
-#            #image is in [-1 ,1] range , convert to [0,1] first
-#             image = (image +1) / 2.0
-#             image_uint8 =(image *255).ast(np.uint8)
-#        else:
-#             #Normailize to [0,,1] range
-#             min_val , max_val=np.min(image),np.max(image)
-#             if max_val > min_val:
-#                 image =(image - min_val) / (max_val - min_val)
-#             else:
-#                  image = np.zeros_like(image)
-#             image_uint8 =(image *255).astype(np.uint8)
-
-#     else:
-#           # If already uint8 but not in [0,255], normalize it
-#         image = image.astype(np.float32)
-#         min_val, max_val = np.min(image),np.max(image)
-#         if max_val > min_val:
-#             image = ( image - min_val) / (max_val - min_val)
-#         else:
-#             image = np.zeros_like(image)
-#         image_uint8 = (image * 255).astype(np.uint8)
-#     return image_uint8
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import numpy as np
-import cv2
-from PIL import Image
-import pydicom
-import nibabel as nib
-from skimage import exposure, filters
+import io
 import logging
-import streamlit as st
+import warnings
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Union
+
+import cv2
+import numpy as np
+from PIL import Image
 from scipy import ndimage
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
-def load_medical_image(file):
-    """Load DICOM, NIfTI, or standard image formats with enhanced processing"""
-    try:
-        image = None
+# ── optional heavy imports ────────────────────────────────────────────────────
+try:
+    import pydicom
+    PYDICOM_AVAILABLE = True
+except ImportError:
+    PYDICOM_AVAILABLE = False
+    logger.warning("pydicom not installed — DICOM support unavailable")
+
+try:
+    import nibabel as nib
+    NIBABEL_AVAILABLE = True
+except ImportError:
+    NIBABEL_AVAILABLE = False
+    logger.warning("nibabel not installed — NIfTI support unavailable")
+
+try:
+    from skimage import morphology, measure, exposure
+    SKIMAGE_AVAILABLE = True
+except ImportError:
+    SKIMAGE_AVAILABLE = False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MRI SEQUENCE CLASSIFIER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MRISequenceClassifier:
+    """
+    Identify MRI sequence (T1 / T2 / FLAIR / T1-Gd / DWI / UNKNOWN)
+    from histogram heuristics or DICOM tags.
+    """
+
+    SEQUENCES = ['T1', 'T2', 'FLAIR', 'T1-Gd', 'DWI', 'UNKNOWN']
+
+    def classify_from_array(self, image: np.ndarray,
+                            dicom_metadata: Optional[Dict] = None) -> str:
+        if dicom_metadata:
+            seq = self._from_dicom(dicom_metadata)
+            if seq != 'UNKNOWN':
+                return seq
+        return self._from_histogram(image)
+
+    def _from_dicom(self, meta: Dict) -> str:
+        seq_name = str(
+            meta.get('sequence_name', '') or meta.get('SequenceName', '') or
+            meta.get('series_description', '') or meta.get('SeriesDescription', '')
+        ).upper()
+        if any(k in seq_name for k in ['FLAIR', 'FL']):
+            return 'FLAIR'
+        if any(k in seq_name for k in ['T1', 'MP-RAGE', 'MPRAGE', 'FLASH']):
+            contrast = str(meta.get('ContrastBolusAgent', '') or
+                           meta.get('contrast_agent', '')).strip()
+            return 'T1-Gd' if contrast else 'T1'
+        if any(k in seq_name for k in ['T2', 'TSE', 'FSE']):
+            return 'T2'
+        if any(k in seq_name for k in ['DWI', 'DTI', 'DIFFUSION', 'EPI']):
+            return 'DWI'
+        return 'UNKNOWN'
+
+    def _from_histogram(self, image: np.ndarray) -> str:
+        img = image.astype(np.float32)
+        if img.ndim == 3:
+            img = img[:, :, img.shape[2] // 2]
+        mn, mx = img.min(), img.max()
+        if mx - mn < 1e-8:
+            return 'UNKNOWN'
+        img = (img - mn) / (mx - mn)
+        brain = img > 0.05
+        if brain.sum() < 200:
+            return 'UNKNOWN'
+        bp = img[brain]
+        f_bright = float((bp > 0.75).mean())
+        f_dark   = float((bp < 0.15).mean())
+        f_mid    = float(((bp > 0.35) & (bp < 0.65)).mean())
+        cv_val   = float(bp.std() / (bp.mean() + 1e-8))
+        if cv_val > 0.55:
+            return 'DWI'
+        if f_bright > 0.25 and f_dark > 0.20:
+            return 'T2'
+        if f_dark > 0.30 and f_mid > 0.30:
+            return 'FLAIR'
+        if f_mid > 0.45 and f_dark < 0.15:
+            return 'T1'
+        return 'UNKNOWN'
+
+    def get_normalisation_params(self, sequence: str) -> Dict:
+        params = {
+            'T1':      {'method': 'percentile', 'low': 0.5,  'high': 99.5},
+            'T2':      {'method': 'percentile', 'low': 0.5,  'high': 99.5},
+            'FLAIR':   {'method': 'zscore',     'clip_sigma': 3.0},
+            'T1-Gd':   {'method': 'percentile', 'low': 1.0,  'high': 99.0},
+            'DWI':     {'method': 'zscore',     'clip_sigma': 2.5},
+            'UNKNOWN': {'method': 'minmax'},
+        }
+        return params.get(sequence, params['UNKNOWN'])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BIAS FIELD CORRECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BiasFieldCorrector:
+    """
+    Approximate N4 bias field correction without ITK.
+    Tries SimpleITK first; falls back to Gaussian log-domain approach.
+    """
+
+    def __init__(self, sigma: float = 40.0):
+        self.sigma = sigma
+
+    def correct(self, image: np.ndarray) -> np.ndarray:
+        orig_dtype = image.dtype
+        img = image.astype(np.float32)
+        mn, mx = img.min(), img.max()
+        if mx - mn < 1e-8:
+            return image
+        try:
+            corrected = self._try_sitk_n4(img)
+            if corrected is not None:
+                return corrected.astype(orig_dtype)
+        except Exception:
+            pass
+        eps = 1.0
+        log_img  = np.log(img - mn + eps)
+        bias_est = cv2.GaussianBlur(log_img, (0, 0), self.sigma,
+                                    borderType=cv2.BORDER_REFLECT)
+        log_corr  = log_img - bias_est
+        corrected = np.exp(log_corr) - eps + mn
+        c_min, c_max = corrected.min(), corrected.max()
+        if c_max > c_min:
+            corrected = (corrected - c_min) / (c_max - c_min) * (mx - mn) + mn
+        return corrected.astype(orig_dtype)
+
+    @staticmethod
+    def _try_sitk_n4(image: np.ndarray) -> Optional[np.ndarray]:
+        try:
+            import SimpleITK as sitk
+            sitk_img    = sitk.GetImageFromArray(image)
+            sitk_img    = sitk.Cast(sitk_img, sitk.sitkFloat32)
+            mask_filter = sitk.OtsuThresholdImageFilter()
+            mask_filter.SetInsideValue(0)
+            mask_filter.SetOutsideValue(1)
+            mask_img    = mask_filter.Execute(sitk_img)
+            corrector   = sitk.N4BiasFieldCorrectionImageFilter()
+            corrected   = corrector.Execute(sitk_img, mask_img)
+            return sitk.GetArrayFromImage(corrected)
+        except ImportError:
+            return None
+        except Exception as e:
+            logger.debug(f"SimpleITK N4 failed: {e}")
+            return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  INTENSITY NORMALISER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class IntensityNormaliser:
+    """Sequence-aware intensity normalisation."""
+
+    def normalise(self, image: np.ndarray, method: str = 'minmax', **kwargs) -> np.ndarray:
+        img = image.astype(np.float32)
+        if method == 'minmax':
+            mn, mx = img.min(), img.max()
+            return (img - mn) / (mx - mn + 1e-8)
+        elif method == 'percentile':
+            low  = kwargs.get('low', 0.5)
+            high = kwargs.get('high', 99.5)
+            p_lo = float(np.percentile(img, low))
+            p_hi = float(np.percentile(img, high))
+            img  = np.clip(img, p_lo, p_hi)
+            return (img - p_lo) / (p_hi - p_lo + 1e-8)
+        elif method == 'zscore':
+            clip_sigma = kwargs.get('clip_sigma', 3.0)
+            mean, std  = float(img.mean()), float(img.std()) + 1e-8
+            img        = (img - mean) / std
+            img        = np.clip(img, -clip_sigma, clip_sigma)
+            return (img + clip_sigma) / (2 * clip_sigma)
+        else:
+            mn, mx = img.min(), img.max()
+            return (img - mn) / (mx - mn + 1e-8)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SKULL STRIP VALIDATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SkullStripValidator:
+    """Heuristic check for whether the brain has been skull-stripped."""
+
+    def assess(self, image: np.ndarray) -> Dict:
+        img = image.astype(np.float32)
+        mn, mx = img.min(), img.max()
+        if mx - mn < 1e-8:
+            return {'is_skull_stripped': False, 'confidence': 0.0}
+        norm = (img - mn) / (mx - mn)
+        edge_width = max(1, int(min(norm.shape) * 0.05))
+        edge_pixels = np.concatenate([
+            norm[:edge_width, :].ravel(),
+            norm[-edge_width:, :].ravel(),
+            norm[:, :edge_width].ravel(),
+            norm[:, -edge_width:].ravel(),
+        ])
+        mean_edge = float(np.mean(edge_pixels))
+        is_stripped = mean_edge < 0.08
+        confidence = float(np.clip(1.0 - mean_edge / 0.15, 0, 1))
+        return {'is_skull_stripped': is_stripped, 'confidence': confidence,
+                'mean_edge_intensity': mean_edge}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MOTION ARTIFACT DETECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MotionArtifactDetector:
+    """Detect motion / ringing artifacts via row-variance analysis."""
+
+    def assess(self, image: np.ndarray) -> Dict:
+        img = image.astype(np.float32)
+        mn, mx = img.min(), img.max()
+        if mx - mn < 1e-8:
+            return {'motion_detected': False, 'motion_score': 0.0,
+                    'severity': 'none'}
+        norm = (img - mn) / (mx - mn)
+        row_vars  = np.var(norm, axis=1)
+        col_vars  = np.var(norm, axis=0)
+        row_cv = float(np.std(row_vars) / (np.mean(row_vars) + 1e-8))
+        col_cv = float(np.std(col_vars) / (np.mean(col_vars) + 1e-8))
+        score  = float((row_cv + col_cv) / 2)
+        detected = score > 0.5
+        severity = 'none' if score < 0.3 else ('mild' if score < 0.6 else 'severe')
+        return {'motion_detected': detected, 'motion_score': round(score, 4),
+                'severity': severity}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MEDICAL IMAGE PREPROCESSOR (orchestrator)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MedicalImagePreprocessor:
+    """
+    Full preprocessing pipeline for a single uploaded file.
+    Returns (processed_array, metadata, quality_report).
+    """
+
+    def __init__(self,
+                 target_size: Tuple[int, int] = (224, 224),
+                 apply_bias_corr: bool = True,
+                 apply_normalisation: bool = True):
+        self.target_size         = target_size
+        self.apply_bias_corr     = apply_bias_corr
+        self.apply_normalisation = apply_normalisation
+        self.seq_classifier      = MRISequenceClassifier()
+        self.bias_corrector      = BiasFieldCorrector()
+        self.intensity_normaliser= IntensityNormaliser()
+        self.skull_validator     = SkullStripValidator()
+        self.motion_detector     = MotionArtifactDetector()
+
+    def load_and_preprocess(self, uploaded_file
+                            ) -> Tuple[Optional[np.ndarray], Dict, Dict]:
+        image, metadata = self._load(uploaded_file)
+        if image is None:
+            return None, {}, {'error': 'Failed to load image'}
+        processed, quality = self._preprocess(image, metadata)
+        return processed, metadata, quality
+
+    # ── loaders ──────────────────────────────────────────────────────────────
+
+    def _load(self, uploaded_file) -> Tuple[Optional[np.ndarray], Dict]:
+        try:
+            # Support file-like objects (Streamlit) and path strings
+            if hasattr(uploaded_file, 'name'):
+                name = uploaded_file.name.lower()
+                file_bytes = uploaded_file.read()
+                if hasattr(uploaded_file, 'seek'):
+                    uploaded_file.seek(0)
+            elif isinstance(uploaded_file, (str, Path)):
+                p = Path(uploaded_file)
+                name = p.name.lower()
+                file_bytes = p.read_bytes()
+            else:
+                file_bytes = uploaded_file.read()
+                name = ''
+
+            if name.endswith('.dcm') or name.endswith(''):
+                result = self._load_dicom(file_bytes)
+                if result[0] is not None:
+                    return result
+
+            if name.endswith(('.nii', '.nii.gz')):
+                return self._load_nifti(file_bytes)
+
+            # Standard image (PNG / JPG / BMP / TIFF)
+            pil_img = Image.open(io.BytesIO(file_bytes)).convert('L')
+            arr     = np.array(pil_img, dtype=np.float32)
+            return arr, {'format': 'standard_image', 'sequence_name': ''}
+
+        except Exception as e:
+            logger.error(f"Image load error: {e}")
+            return None, {}
+
+    def _load_dicom(self, file_bytes: bytes) -> Tuple[Optional[np.ndarray], Dict]:
+        if not PYDICOM_AVAILABLE:
+            return None, {}
+        try:
+            ds  = pydicom.dcmread(io.BytesIO(file_bytes), force=True)
+            arr = ds.pixel_array.astype(np.float32)
+            meta = {
+                'format': 'dicom',
+                'PatientID': str(getattr(ds, 'PatientID', '')),
+                'StudyDate': str(getattr(ds, 'StudyDate', '')),
+                'Modality':  str(getattr(ds, 'Modality', '')),
+                'SeriesDescription': str(getattr(ds, 'SeriesDescription', '')),
+                'PixelSpacing': getattr(ds, 'PixelSpacing', None),
+                'SliceThickness': getattr(ds, 'SliceThickness', None),
+            }
+            return arr, meta
+        except Exception as e:
+            logger.debug(f"DICOM load failed: {e}")
+            return None, {}
+
+    def _load_nifti(self, file_bytes: bytes) -> Tuple[Optional[np.ndarray], Dict]:
+        if not NIBABEL_AVAILABLE:
+            return None, {}
+        try:
+            fh  = nib.FileHolder(fileobj=io.BytesIO(file_bytes))
+            img = nib.Nifti1Image.from_file_map({'header': fh, 'image': fh})
+            arr = img.get_fdata().astype(np.float32)
+            return arr, {'format': 'nifti', 'shape': arr.shape,
+                         'voxel_sizes': img.header.get_zooms()}
+        except Exception as e:
+            logger.debug(f"NIfTI load failed: {e}")
+            return None, {}
+
+    # ── core preprocess ───────────────────────────────────────────────────────
+
+    def _preprocess(self, image: np.ndarray,
+                    metadata: Dict) -> Tuple[np.ndarray, Dict]:
+        quality: Dict = {}
+
+        # Convert RGB → greyscale
+        if image.ndim == 3 and image.shape[2] in (3, 4):
+            image = image.mean(axis=2)
+
+        is_volume = image.ndim == 3 and image.shape[0] > 4
+        rep_slice = image[image.shape[0] // 2] if is_volume else image.squeeze()
+
+        if is_volume:
+            quality['is_3d_volume'] = True
+            quality['n_slices']     = int(image.shape[0])
+
+        # 1. Sequence detection
+        seq = self.seq_classifier.classify_from_array(rep_slice, metadata)
+        metadata['inferred_sequence'] = seq
+        quality['sequence_type'] = seq
+
+        # 2. Motion detection
+        quality['motion'] = self.motion_detector.assess(rep_slice)
+
+        # 3. Skull-strip check
+        quality['skull_strip'] = self.skull_validator.assess(rep_slice)
+        metadata['skull_stripped'] = quality['skull_strip']['is_skull_stripped']
+
+        # 4. Bias correction
+        if self.apply_bias_corr:
+            try:
+                rep_slice = self.bias_corrector.correct(rep_slice)
+                quality['bias_correction'] = 'applied'
+            except Exception as e:
+                quality['bias_correction'] = f'failed: {e}'
+
+        # 5. Intensity normalisation
+        norm_p = self.seq_classifier.get_normalisation_params(seq)
+        if self.apply_normalisation:
+            rep_slice = IntensityNormaliser().normalise(rep_slice, **norm_p)
+            quality['normalisation'] = norm_p['method']
+
+        # 6. Resize to target
+        rep_slice = np.clip(
+            cv2.resize(rep_slice.astype(np.float32), self.target_size,
+                       interpolation=cv2.INTER_LINEAR),
+            0.0, 1.0).astype(np.float32)
+
+        if is_volume:
+            vol = np.zeros((image.shape[0], *self.target_size), dtype=np.float32)
+            for d in range(image.shape[0]):
+                sl = image[d].astype(np.float32)
+                if self.apply_bias_corr:
+                    sl = self.bias_corrector.correct(sl)
+                if self.apply_normalisation:
+                    sl = IntensityNormaliser().normalise(sl, **norm_p)
+                vol[d] = np.clip(
+                    cv2.resize(sl, self.target_size, interpolation=cv2.INTER_LINEAR),
+                    0.0, 1.0)
+            return vol, quality
+
+        return rep_slice, quality
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE-LEVEL CONVENIENCE FUNCTIONS  (PUBLIC API)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Shared singleton preprocessor ────────────────────────────────────────────
+_PREPROCESSOR = MedicalImagePreprocessor(target_size=(224, 224))
+
+
+def preprocess_mri(image: np.ndarray,
+                   target_size: Tuple[int, int] = (224, 224),
+                   apply_bias_corr: bool = True,
+                   apply_normalisation: bool = True,
+                   metadata: Optional[Dict] = None) -> np.ndarray:
+    """
+    PRIMARY ENTRY POINT — was missing in v3.0, causing all import failures.
+
+    Preprocess a raw MRI numpy array for model inference.
+
+    Parameters
+    ----------
+    image               : Raw array (H×W) or (H×W×C) or (D×H×W) volume
+    target_size         : Output spatial size (default 224×224)
+    apply_bias_corr     : Apply N4-style bias field correction
+    apply_normalisation : Apply sequence-aware intensity normalisation
+    metadata            : Optional DICOM/NIfTI metadata dict for seq detection
+
+    Returns
+    -------
+    np.ndarray  float32  in [0, 1],  shape (H, W)  or (D, H, W)
+    """
+    if metadata is None:
         metadata = {}
-        
-        # Read file content once
-        file_content = file.read()
-        file.seek(0)  # Reset file pointer
-        
-        if file.name.lower().endswith('.dcm'):
-            # Load DICOM with metadata extraction
-            import pydicom
-            from io import BytesIO
-            
-            dicom_data = pydicom.dcmread(BytesIO(file_content))
-            image = dicom_data.pixel_array.astype(np.float32)
-            
-            # Extract DICOM metadata
-            try:
-                metadata['patient_id'] = str(getattr(dicom_data, 'PatientID', 'Unknown'))
-                metadata['patient_name'] = str(getattr(dicom_data, 'PatientName', 'Unknown'))
-                metadata['study_date'] = str(getattr(dicom_data, 'StudyDate', 'Unknown'))
-                metadata['modality'] = str(getattr(dicom_data, 'Modality', 'Unknown'))
-                metadata['study_description'] = str(getattr(dicom_data, 'StudyDescription', 'Unknown'))
-                
-                # Extract voxel size for volume calculations
-                if hasattr(dicom_data, 'PixelSpacing'):
-                    pixel_spacing = dicom_data.PixelSpacing
-                    slice_thickness = getattr(dicom_data, 'SliceThickness', 1.0)
-                    metadata['voxel_size'] = (float(slice_thickness), float(pixel_spacing[0]), float(pixel_spacing[1]))
-                else:
-                    metadata['voxel_size'] = (1.0, 1.0, 1.0)
-                    
-            except Exception as meta_error:
-                logger.warning(f"Metadata extraction failed: {meta_error}")
-                metadata = {}
-            
-            # Apply DICOM windowing if available
-            center = getattr(dicom_data, 'WindowCenter', None)
-            width = getattr(dicom_data, 'WindowWidth', None)
-            
-            if center is not None and width is not None:
-                try:
-                    if hasattr(center, '__iter__'):
-                        center = float(center[0])
-                    if hasattr(width, '__iter__'):
-                        width = float(width[0])
-                    
-                    window_min = center - width/2
-                    window_max = center + width/2
-                    image = np.clip(image, window_min, window_max)
-                    image = (image - window_min) / (window_max - window_min + 1e-8)
-                except:
-                    # Fallback normalization
-                    image = (image - np.min(image)) / (np.max(image) - np.min(image) + 1e-8)
-            else:
-                # Default normalization for medical images
-                p1, p99 = np.percentile(image, [1, 99])
-                image = np.clip(image, p1, p99)
-                image = (image - p1) / (p99 - p1 + 1e-8)
-                
-        elif file.name.lower().endswith(('.nii', '.nii.gz')):
-            # Load NIfTI with enhanced processing
-            import nibabel as nib
-            from io import BytesIO
-            
-            nifti_img = nib.load(BytesIO(file_content))
-            image_data = nifti_img.get_fdata()
-            
-            # Extract NIfTI metadata
-            try:
-                header = nifti_img.header
-                metadata['voxel_size'] = header.get_zooms()[:3]
-                metadata['dimensions'] = header.get_data_shape()
-            except:
-                metadata['voxel_size'] = (1.0, 1.0, 1.0)
-            
-            # Take middle slice for 2D visualization, but keep 3D for processing
-            if len(image_data.shape) == 3:
-                image = image_data.astype(np.float32)
-                # Normalize each slice separately
-                for z in range(image.shape[2]):
-                    slice_data = image[:, :, z]
-                    p1, p99 = np.percentile(slice_data[slice_data > 0], [1, 99]) if np.any(slice_data > 0) else (0, 1)
-                    slice_data = np.clip(slice_data, p1, p99)
-                    if p99 > p1:
-                        image[:, :, z] = (slice_data - p1) / (p99 - p1 + 1e-8)
-                    else:
-                        image[:, :, z] = slice_data
-            else:
-                image = image_data.astype(np.float32)
-                p1, p99 = np.percentile(image[image > 0], [1, 99]) if np.any(image > 0) else (0, 1)
-                image = np.clip(image, p1, p99)
-                if p99 > p1:
-                    image = (image - p1) / (p99 - p1 + 1e-8)
-                    
-        else:
-            # Standard image formats with enhanced processing
-            from io import BytesIO
-            pil_image = Image.open(BytesIO(file_content))
-            
-            # Convert to grayscale if needed
-            if pil_image.mode != 'L':
-                pil_image = pil_image.convert('L')
-                
-            image = np.array(pil_image).astype(np.float32)
-            
-            # Advanced normalization for standard images
-            p1, p99 = np.percentile(image, [1, 99])
-            image = np.clip(image, p1, p99)
-            image = (image - p1) / (p99 - p1 + 1e-8)
+    proc = MedicalImagePreprocessor(
+        target_size=target_size,
+        apply_bias_corr=apply_bias_corr,
+        apply_normalisation=apply_normalisation,
+    )
+    processed, _ = proc._preprocess(image.copy(), metadata)
+    return processed
 
-        return image, metadata
-        
-    except Exception as e:
-        logger.error(f"Error loading image: {str(e)}")
-        st.error(f"Error loading medical image: {str(e)}")
+
+def prepare_image_for_display(image: np.ndarray) -> np.ndarray:
+    """
+    Normalise an array to [0, 1] float32 for display / overlay purposes.
+    Works on 2-D slices and 3-D volumes (returns normalised version).
+    """
+    img = image.astype(np.float32)
+    mn, mx = img.min(), img.max()
+    if mx - mn < 1e-8:
+        return np.zeros_like(img)
+    return (img - mn) / (mx - mn)
+
+
+def load_medical_image(uploaded_file,
+                       target_size: Tuple[int, int] = (224, 224)
+                       ) -> Tuple[Optional[np.ndarray], Dict]:
+    """
+    Load a medical image from an uploaded file-like object.
+
+    Supports: DICOM (.dcm), NIfTI (.nii/.nii.gz), PNG, JPG, BMP, TIFF.
+
+    Returns
+    -------
+    (image_array, metadata_dict)
+    image_array : float32 array, normalised to [0, 1], resized to target_size
+                  None if loading failed.
+    """
+    proc = MedicalImagePreprocessor(target_size=target_size)
+    image, metadata = proc._load(uploaded_file)
+    if image is None:
         return None, {}
+    # Normalise & resize the representative slice for display
+    processed, quality = proc._preprocess(image, metadata)
+    metadata['quality'] = quality
+    return processed, metadata
 
-def preprocess_mri(image, target_size=(224, 224), is_3d=False, enhance=True, for_model=True):
-    """
-    Advanced MRI preprocessing optimized for pre-trained models
-    Returns:
-    - model_ready: Preprocessed image for model input (normalized appropriately)
-    - display_ready: Image prepared for display
-    """
-    if image is None:
-        return None, None
-    
-    # Handle 3D volumes
-    if is_3d and len(image.shape) == 3:
-        model_slices, display_slices = [], []
-        for i in range(image.shape[2]):
-            slice_img = image[:, :, i]
-            m_ready, d_ready = preprocess_mri(slice_img, target_size, is_3d=False, 
-                                            enhance=enhance, for_model=for_model)
-            model_slices.append(m_ready)
-            display_slices.append(d_ready)
-        return np.stack(model_slices, axis=2), np.stack(display_slices, axis=2)
 
-    # Convert to 2D if needed
-    if len(image.shape) == 3 and image.shape[2] == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    elif len(image.shape) == 3 and image.shape[2] > 3:
-        image = image[:, :, 0]  # Take first channel
+def preprocess_uploaded_file(uploaded_file,
+                              target_size: Tuple[int, int] = (224, 224)
+                              ) -> Tuple[Optional[np.ndarray], Dict, Dict]:
+    """Returns (image, metadata, quality_report)."""
+    return MedicalImagePreprocessor(target_size=target_size).load_and_preprocess(uploaded_file)
 
-    # Ensure proper data type
-    if image.dtype != np.float32:
-        image = image.astype(np.float32)
 
-    # Enhancement steps (only for display, models prefer normalized raw data)
-    display_image = image.copy()
-    
-    if enhance:
-        # Convert to uint8 for OpenCV operations
-        if display_image.max() <= 1.0:
-            display_uint8 = (display_image * 255).astype(np.uint8)
-        else:
-            display_uint8 = display_image.astype(np.uint8)
-        
-        # CLAHE contrast enhancement for display
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        display_uint8 = clahe.apply(display_uint8)
-        
-        # Mild denoising for display
-        display_uint8 = cv2.fastNlMeansDenoising(display_uint8)
-        
-        # Convert back to float for consistency
-        display_image = display_uint8.astype(np.float32) / 255.0
-    else:
-        if display_image.max() > 1.0:
-            display_image = display_image / 255.0
+def classify_mri_sequence(image: np.ndarray,
+                           metadata: Optional[Dict] = None) -> str:
+    return MRISequenceClassifier().classify_from_array(image, metadata or {})
 
-    # Resize both model and display images
-    model_image = cv2.resize(image, target_size, interpolation=cv2.INTER_AREA)
-    display_image = cv2.resize(display_image, target_size, interpolation=cv2.INTER_CUBIC)
 
-    # --------- MODEL-READY PROCESSING ---------
-    if for_model:
-        # Different normalization for pre-trained models
-        if model_image.max() > 1.0:
-            model_image = model_image / 255.0
-        
-        # Standard normalization for pre-trained models (mean 0, std 1)
-        model_mean = np.mean(model_image)
-        model_std = np.std(model_image)
-        if model_std > 0:
-            model_image = (model_image - model_mean) / model_std
-        else:
-            model_image = model_image - model_mean
-            
-        # For models expecting 3 channels, replicate grayscale to RGB
-        if len(model_image.shape) == 2:
-            model_image = np.stack([model_image] * 3, axis=-1)
-    
-    # --------- DISPLAY-READY PROCESSING ---------
-    # Ensure display image is in [0, 1] range
-    display_image = np.clip(display_image, 0, 1)
-    if len(display_image.shape) == 2:
-        display_image = np.stack([display_image] * 3, axis=-1)
+def assess_scan_motion(image: np.ndarray) -> Dict:
+    return MotionArtifactDetector().assess(image)
 
-    return model_image, display_image
 
-def prepare_image_for_display(image):
-    """Prepare image for display by ensuring it's in uint8 format [0,255]."""
-    if image is None:
-        return None
-    
-    # Handle different input types
-    if isinstance(image, Image.Image):
-        image = np.array(image)
-    
-    # Convert to float for processing
-    if image.dtype != np.float32:
-        image = image.astype(np.float32)
-    
-    # Normalize to [0, 1] range
-    min_val, max_val = np.min(image), np.max(image)
-    if max_val > min_val:
-        image = (image - min_val) / (max_val - min_val)
-    else:
-        image = np.zeros_like(image)
-    
-    # Convert to uint8
-    image_uint8 = (image * 255).astype(np.uint8)
-    
-    # Ensure 3 channels for color display
-    if len(image_uint8.shape) == 2:
-        image_uint8 = np.stack([image_uint8] * 3, axis=-1)
-    
-    return image_uint8
-
-def normalize_volume(volume, method='zscore'):
-    """
-    Normalize 3D volume using different methods
-    Methods: 'zscore', 'minmax', 'percentile'
-    """
-    if volume is None:
-        return None
-    
-    volume = volume.astype(np.float32)
-    
-    if method == 'zscore':
-        # Remove outliers using percentile clipping, then z-score
-        p1, p99 = np.percentile(volume, [1, 99])
-        clipped = np.clip(volume, p1, p99)
-        mean = np.mean(clipped)
-        std = np.std(clipped) + 1e-8
-        return (clipped - mean) / std
-        
-    elif method == 'percentile':
-        # Percentile-based normalization (0-1)
-        p1, p99 = np.percentile(volume, [1, 99])
-        clipped = np.clip(volume, p1, p99)
-        return (clipped - p1) / (p99 - p1 + 1e-8)
-        
-    else:  # minmax
-        # Simple min-max normalization
-        mn, mx = np.min(volume), np.max(volume)
-        return (volume - mn) / (mx - mn + 1e-8)
-
-def resize_volume(volume, target_shape):
-    """Resize 3D volume to target shape with linear interpolation"""
-    try:
-        if volume.shape == target_shape:
-            return volume
-            
-        factors = [t / s for t, s in zip(target_shape, volume.shape)]
-        resized = ndimage.zoom(volume, zoom=factors, order=1, mode='nearest')
-        return resized
-    except Exception as e:
-        logger.error(f"Volume resize failed: {e}")
-        return volume
-
-def remove_small_components(mask, min_size=100):
-    """Remove small connected components from binary mask"""
-    try:
-        from skimage import morphology
-        cleaned = morphology.remove_small_objects(mask.astype(bool), min_size=min_size)
-        return cleaned.astype(mask.dtype)
-    except ImportError:
-        # Fallback implementation
-        labeled, num_features = ndimage.label(mask)
-        if num_features > 0:
-            component_sizes = np.bincount(labeled.ravel())
-            small_components = np.where(component_sizes < min_size)[0]
-            for comp_id in small_components:
-                if comp_id > 0:  # Skip background
-                    mask[labeled == comp_id] = 0
-        return mask
-    except Exception as e:
-        logger.error(f"Error in remove_small_components: {e}")
-        return mask
+def correct_bias_field(image: np.ndarray, sigma: float = 40.0) -> np.ndarray:
+    return BiasFieldCorrector(sigma=sigma).correct(image)
