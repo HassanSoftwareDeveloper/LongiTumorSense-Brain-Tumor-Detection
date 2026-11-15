@@ -1,0 +1,71 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+fyp/
+env/
+ENV/
+.venv/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+app.log
+brain_tumor_analysis.log
+logs/*
+!logs/.gitkeep
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Model weights (too large for GitHub — downloaded via download_models.py) ──
+models/**/*.pth
+models/**/*.pt
+models/**/*.onnx
+models/**/*.safetensors
+models/cache/
+models/rad_dino/
+models/radimagenet/
+
+# Keep MONAI config files but exclude model weights
+models/monai/**/*.pt
+models/monai/**/*.pth
+models/monai/**/*.safetensors
+models/monai/**/.cache/
+
+# Keep directory placeholders and config files
+!models/brats/.gitkeep
+!models/monai/brats_mri_segmentation/configs/
+!models/monai/brats_mri_segmentation/docs/
+!models/monai/brats_mri_segmentation/scripts/
+!models/monai/brats_mri_segmentation/*.json
+!models/monai/brats_mri_segmentation/*.md
+!models/monai/brats_mri_segmentation/LICENSE
+
+# ── Temp / output files ───────────────────────────────────────────────────────
+temp/*
+!temp/.gitkeep
+reports/*.pdf
+reports/*.html
+
+# ── User data ─────────────────────────────────────────────────────────────────
+data/*.json
+data/user_sessions.json
+
+# Keep data directory placeholder
+!data/.gitkeep
